@@ -10,7 +10,6 @@ export default {
     '^~(.*)$': '<rootDir>/src$1',
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
     '\\.(jpg|jpeg|png|gif|svg)$': '<rootDir>/tests/__mocks__/fileMock.js',
-    '^~/core/store/store$': '<rootDir>/tests/__mocks__/store-mock.ts',
   },
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',

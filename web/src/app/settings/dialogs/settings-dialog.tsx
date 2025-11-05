@@ -18,11 +18,9 @@ import {
   DialogTrigger,
 } from "~/components/ui/dialog";
 import { Tabs, TabsContent } from "~/components/ui/tabs";
-import { useReplay } from "~/core/replay";
 import {
   type SettingsState,
-  changeSettings,
-  saveSettings,
+  updateSettings,
   useSettingsStore,
 } from "~/core/store";
 import { cn } from "~/lib/utils";
@@ -32,7 +30,6 @@ import { SETTINGS_TABS } from "../tabs";
 export function SettingsDialog() {
   const t = useTranslations('settings');
   const tCommon = useTranslations('common');
-  const { isReplay } = useReplay();
   const [activeTabId, setActiveTabId] = useState(SETTINGS_TABS[0]!.id);
   const [open, setOpen] = useState(false);
   const [settings, setSettings] = useState(useSettingsStore.getState());
@@ -60,8 +57,7 @@ export function SettingsDialog() {
       };
       setSettings(newSettings);
       setChanges({});
-      changeSettings(newSettings);
-      saveSettings();
+      updateSettings(newSettings);
     }
     setOpen(false);
   }, [settings, changes]);
@@ -88,10 +84,6 @@ export function SettingsDialog() {
       ...changes,
     };
   }, [settings, changes]);
-
-  if (isReplay) {
-    return null;
-  }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
