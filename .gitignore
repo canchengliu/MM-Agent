@@ -27,3 +27,8 @@ conf.yaml
 # coverage report
 coverage.xml
 coverage/
+
+tasks/
+fix.sh
+error.log
+run_tasks.sh
