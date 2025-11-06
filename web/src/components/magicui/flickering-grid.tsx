@@ -22,6 +22,13 @@ interface FlickeringGridProps extends React.HTMLAttributes<HTMLDivElement> {
   maxOpacity?: number;
 }
 
+type GridMetrics = {
+  cols: number;
+  rows: number;
+  squares: Float32Array;
+  dpr: number;
+};
+
 export const FlickeringGrid: React.FC<FlickeringGridProps> = ({
   squareSize = 4,
   gridGap = 6,
@@ -76,7 +83,7 @@ export const FlickeringGrid: React.FC<FlickeringGridProps> = ({
   }, [color]);
 
   const setupCanvas = useCallback(
-    (canvas: HTMLCanvasElement, width: number, height: number) => {
+    (canvas: HTMLCanvasElement, width: number, height: number): GridMetrics => {
       const dpr = window.devicePixelRatio || 1;
       canvas.width = width * dpr;
       canvas.height = height * dpr;
@@ -145,22 +152,23 @@ export const FlickeringGrid: React.FC<FlickeringGridProps> = ({
     if (!ctx) return;
 
     let animationFrameId: number;
-    let gridParams: ReturnType<typeof setupCanvas>;
+    let gridParams: GridMetrics | null = null;
 
     const updateCanvasSize = () => {
       const newWidth = width || container.clientWidth;
       const newHeight = height || container.clientHeight;
       setCanvasSize({ width: newWidth, height: newHeight });
-      gridParams = setupCanvas(canvas, newWidth, newHeight);
-      if (prefersReducedMotion && gridParams && ctx) {
+      const nextParams = setupCanvas(canvas, newWidth, newHeight);
+      gridParams = nextParams;
+      if (prefersReducedMotion && ctx) {
         drawGrid(
           ctx,
           canvas.width,
           canvas.height,
-          gridParams.cols,
-          gridParams.rows,
-          gridParams.squares,
-          gridParams.dpr,
+          nextParams.cols,
+          nextParams.rows,
+          nextParams.squares,
+          nextParams.dpr,
         );
       }
     };
@@ -173,6 +181,10 @@ export const FlickeringGrid: React.FC<FlickeringGridProps> = ({
 
       const deltaTime = (time - lastTime) / 1000;
       lastTime = time;
+
+      if (!gridParams) {
+        return;
+      }
 
       updateSquares(gridParams.squares, deltaTime);
       drawGrid(
@@ -204,16 +216,19 @@ export const FlickeringGrid: React.FC<FlickeringGridProps> = ({
 
     if (isInView && !prefersReducedMotion) {
       animationFrameId = requestAnimationFrame(animate);
-    } else if (prefersReducedMotion && gridParams && ctx) {
-      drawGrid(
-        ctx,
-        canvas.width,
-        canvas.height,
-        gridParams.cols,
-        gridParams.rows,
-        gridParams.squares,
-        gridParams.dpr,
-      );
+    } else if (prefersReducedMotion && ctx) {
+      if (gridParams !== null) {
+        const params = gridParams as GridMetrics;
+        drawGrid(
+          ctx,
+          canvas.width,
+          canvas.height,
+          params.cols,
+          params.rows,
+          params.squares,
+          params.dpr,
+        );
+      }
     }
 
     return () => {

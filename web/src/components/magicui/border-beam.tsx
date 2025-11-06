@@ -1,6 +1,7 @@
 "use client";
 
 import { motion, type MotionStyle, type Transition } from "framer-motion";
+import type { CSSProperties } from "react";
 
 import { usePrefersReducedMotion } from "~/lib/a11y/motion-preferences";
 import { cn } from "~/lib/utils";
@@ -37,7 +38,7 @@ interface BorderBeamProps {
   /**
    * The style of the border beam.
    */
-  style?: React.CSSProperties;
+  style?: CSSProperties;
   /**
    * Whether to reverse the animation direction.
    */
@@ -78,10 +79,12 @@ export const BorderBeam = ({
             "absolute aspect-square bg-gradient-to-l from-[var(--color-from)] via-[var(--color-to)] to-transparent motion-reduce:animate-none",
             className,
           )}
-          style={{
-            ...beamStyle,
-            offsetDistance: `${initialOffset}%`,
-          }}
+          style={
+            {
+              ...beamStyle,
+              offsetDistance: `${initialOffset}%`,
+            } as CSSProperties
+          }
           aria-hidden="true"
         />
       </div>

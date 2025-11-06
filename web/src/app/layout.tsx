@@ -25,15 +25,8 @@ export const metadata: Metadata = {
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 
-const geistSans = GeistSans({
-  subsets: ["latin"],
-  variable: "--font-geist-sans",
-});
-
-const geistMono = GeistMono({
-  subsets: ["latin"],
-  variable: "--font-geist-mono",
-});
+const geistSans = GeistSans;
+const geistMono = GeistMono;
 
 export default async function RootLayout({
   children,

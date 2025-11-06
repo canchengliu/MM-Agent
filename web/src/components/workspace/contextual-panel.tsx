@@ -3,13 +3,13 @@
 
 "use client";
 
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
 type ContextualPanelVariant = "log" | "inspector";
 
-interface ContextualPanelProps extends React.HTMLAttributes<aside> {
+interface ContextualPanelProps extends HTMLAttributes<HTMLElement> {
   title?: string;
   description?: string;
   variant?: ContextualPanelVariant;

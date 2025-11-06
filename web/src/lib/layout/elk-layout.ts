@@ -200,7 +200,6 @@ function cloneNodeWithPosition(
   return {
     ...node,
     position: { x, y },
-    positionAbsolute: { x, y },
   };
 }
 
@@ -254,9 +253,10 @@ export async function layoutHistoryGraph({
       },
     });
 
-    const mappedNodes = safeNodes.map((node) =>
-      cloneNodeWithPosition(node, response.positions[node.id ?? ""]),
-    );
+    const mappedNodes = safeNodes.map((node) => {
+      const position = response.positions[node.id ?? ""] ?? null;
+      return cloneNodeWithPosition(node, position);
+    });
 
     return {
       nodes: mappedNodes,

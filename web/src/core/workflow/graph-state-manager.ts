@@ -128,7 +128,8 @@ export class GraphStateManager {
 
   public markNodeQueued(nodeId: string): boolean {
     return this.updateNodeStatus(nodeId, {
-      runtime_status: "QUEUED",
+      runtime_status: "IDLE",
+      provenance_status: "QUEUED",
     });
   }
 
@@ -168,7 +169,8 @@ export class GraphStateManager {
 
     const targetEdges = Array.from(outgoingEdgeIds)
       .map((edgeId) => this.edges.get(edgeId))
-      .filter((edge): edge is HistoryEdgeType => Boolean(edge) && edge.target === targetId);
+      .filter((edge): edge is HistoryEdgeType => Boolean(edge))
+      .filter((edge) => edge.target === targetId);
 
     if (targetEdges.length === 0) {
       this.logger?.debug?.(

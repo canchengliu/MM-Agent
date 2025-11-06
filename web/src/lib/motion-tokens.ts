@@ -36,8 +36,9 @@ export const spring = {
   },
 } as const;
 
+type TransitionEase = Transition extends { ease?: infer T } ? T : unknown;
 type MotionTransition = Transition & {
-  ease?: Transition["ease"];
+  ease?: TransitionEase;
 };
 
 export const transitions = {

@@ -53,6 +53,13 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-border: var(--border);
+  --color-border-default: var(--ui-border-default);
+  --color-border-subtle: var(--ui-border-subtle);
+  --color-border-interactive: var(--ui-border-interactive);
+  --color-border-focused: var(--ui-border-focused);
+  --color-border-decorative: var(--ui-border-decorative);
+  --color-border-success: var(--ui-border-success);
+  --color-border-danger: var(--ui-border-danger);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-chart-1: var(--chart-1);
@@ -175,13 +182,21 @@
   --color-text-warning: var(--yellow-500);
   --color-text-danger: var(--red-500);
 
-  --color-border-default: var(--gray-200);
-  --color-border-subtle: rgb(229 231 235 / 0.5);
-  --color-border-interactive: var(--gray-300);
-  --color-border-focused: var(--blue-500);
-  --color-border-decorative: var(--blue-500);
-  --color-border-success: var(--green-500);
-  --color-border-danger: var(--red-500);
+  --ui-border-default: var(--gray-200);
+  --ui-border-subtle: rgb(229 231 235 / 0.5);
+  --ui-border-interactive: var(--gray-300);
+  --ui-border-focused: var(--blue-500);
+  --ui-border-decorative: var(--blue-500);
+  --ui-border-success: var(--green-500);
+  --ui-border-danger: var(--red-500);
+
+  --color-border-default: var(--ui-border-default);
+  --color-border-subtle: var(--ui-border-subtle);
+  --color-border-interactive: var(--ui-border-interactive);
+  --color-border-focused: var(--ui-border-focused);
+  --color-border-decorative: var(--ui-border-decorative);
+  --color-border-success: var(--ui-border-success);
+  --color-border-danger: var(--ui-border-danger);
 
   --color-glow-accent: rgb(59 130 246 / 0.2);
   --color-glow-pulse: rgb(168 85 247 / 0.3);
@@ -290,13 +305,21 @@
   --color-text-warning: var(--yellow-400);
   --color-text-danger: var(--red-400);
 
-  --color-border-default: var(--gray-800);
-  --color-border-subtle: rgb(31 41 55 / 0.5);
-  --color-border-interactive: var(--gray-700);
-  --color-border-focused: var(--blue-500);
-  --color-border-decorative: var(--blue-400);
-  --color-border-success: var(--green-500);
-  --color-border-danger: var(--red-500);
+  --ui-border-default: var(--gray-800);
+  --ui-border-subtle: rgb(31 41 55 / 0.5);
+  --ui-border-interactive: var(--gray-700);
+  --ui-border-focused: var(--blue-500);
+  --ui-border-decorative: var(--blue-400);
+  --ui-border-success: var(--green-500);
+  --ui-border-danger: var(--red-500);
+
+  --color-border-default: var(--ui-border-default);
+  --color-border-subtle: var(--ui-border-subtle);
+  --color-border-interactive: var(--ui-border-interactive);
+  --color-border-focused: var(--ui-border-focused);
+  --color-border-decorative: var(--ui-border-decorative);
+  --color-border-success: var(--ui-border-success);
+  --color-border-danger: var(--ui-border-danger);
 
   --color-glow-accent: rgb(59 130 246 / 0.3);
   --color-glow-pulse: rgb(168 85 247 / 0.4);
@@ -377,7 +400,7 @@
 .density-compact {
   /* Density-aware spacing overrides (Compact mode) */
   --spacing-inset-sm: theme('spacing.1');
-  --spacing-inset-md: theme('spacing.2_5');
+  --spacing-inset-md: theme('spacing[2.5]');
   --spacing-inset-lg: theme('spacing.4');
   --spacing-stack-sm: theme('spacing.1');
   --spacing-stack-md: theme('spacing.2');
@@ -402,7 +425,7 @@
   }
 
   .glassmorphism {
-    @apply relative overflow-hidden border border-border-subtle bg-background-overlay backdrop-blur-md;
+    @apply relative overflow-hidden border border-border-subtle backdrop-blur-md;
     background-color: color-mix(
       in srgb,
       var(--color-background-overlay) 82%,
@@ -443,7 +466,8 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background-primary text-text-primary;
+    background-color: var(--color-background-primary);
+    color: var(--color-text-primary);
   }
 }
 

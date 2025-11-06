@@ -39,7 +39,7 @@ export function Markdown({
   const components: ReactMarkdownOptions["components"] = useMemo(() => {
     return {
       a: ({ href, children }) => (
-        <Link href={href} checkLinkCredibility={checkLinkCredibility}>
+        <Link href={href} warnUnverified={checkLinkCredibility}>
           {children}
         </Link>
       ),

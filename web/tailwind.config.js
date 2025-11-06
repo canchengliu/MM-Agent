@@ -1,6 +1,16 @@
 import defaultTheme from "tailwindcss/defaultTheme";
 import typography from "@tailwindcss/typography";
 
+const borderPalette = {
+  default: "var(--color-border-default)",
+  subtle: "var(--color-border-subtle)",
+  interactive: "var(--color-border-interactive)",
+  focused: "var(--color-border-focused)",
+  decorative: "var(--color-border-decorative)",
+  success: "var(--color-border-success)",
+  danger: "var(--color-border-danger)",
+};
+
 /** @type {import('tailwindcss').Config} */
 const config = {
   content: [
@@ -54,15 +64,7 @@ const config = {
           warning: "var(--color-text-warning)",
           danger: "var(--color-text-danger)",
         },
-        border: {
-          default: "var(--color-border-default)",
-          subtle: "var(--color-border-subtle)",
-          interactive: "var(--color-border-interactive)",
-          focused: "var(--color-border-focused)",
-          decorative: "var(--color-border-decorative)",
-          success: "var(--color-border-success)",
-          danger: "var(--color-border-danger)",
-        },
+        border: borderPalette,
         glow: {
           accent: "var(--color-glow-accent)",
           pulse: "var(--color-glow-pulse)",
@@ -130,7 +132,7 @@ const config = {
       animation: {
         "data-flow": "data-flow 0.65s linear infinite",
       },
-      typography: (theme) => ({
+      typography: ({ theme }) => ({
         DEFAULT: {
           css: {
             "--tw-prose-body": theme("colors.text.primary"),
@@ -155,6 +157,16 @@ const config = {
           },
         },
       }),
+      borderColor: {
+        DEFAULT: borderPalette.default,
+        "border-default": borderPalette.default,
+        "border-subtle": borderPalette.subtle,
+        "border-interactive": borderPalette.interactive,
+        "border-focused": borderPalette.focused,
+        "border-decorative": borderPalette.decorative,
+        "border-success": borderPalette.success,
+        "border-danger": borderPalette.danger,
+      },
     },
   },
   plugins: [typography],

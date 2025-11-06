@@ -167,8 +167,8 @@ function areNodePropsEqual(prev: CustomNodeProps, next: CustomNodeProps): boolea
   if (
     prev.selected !== next.selected ||
     prev.dragging !== next.dragging ||
-    prev.xPos !== next.xPos ||
-    prev.yPos !== next.yPos ||
+    prev.positionAbsoluteX !== next.positionAbsoluteX ||
+    prev.positionAbsoluteY !== next.positionAbsoluteY ||
     prev.width !== next.width ||
     prev.height !== next.height
   ) {

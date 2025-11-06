@@ -13,7 +13,7 @@ interface BaseBroadcastEvent {
   payload?: Record<string, unknown> | null;
 }
 
-interface NodeEventPayload {
+type NodeEventPayload = Record<string, unknown> & {
   node?: string;
   status?: string;
   inputs?: Record<string, unknown> | null;
@@ -23,7 +23,7 @@ interface NodeEventPayload {
   parent_node?: string;
   upstream_node?: string;
   next_nodes?: unknown;
-}
+};
 
 interface NodeStartEvent extends BaseBroadcastEvent {
   event_type: "NODE_START";
@@ -221,7 +221,7 @@ export class SSEEventHandler {
     });
 
     if (candidates.length === 1) {
-      return candidates[0].source;
+      return candidates[0]?.source ?? null;
     }
 
     if (candidates.length > 1) {
