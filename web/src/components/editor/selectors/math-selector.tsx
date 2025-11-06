@@ -30,7 +30,9 @@ export const MathSelector = () => {
       }}
     >
       <SigmaIcon
-        className={cn("size-4", { "text-blue-500": editor.isActive("math") })}
+        className={cn("size-4", {
+          "text-text-accent": editor.isActive("math"),
+        })}
         strokeWidth={2.3}
       />
     </Button>

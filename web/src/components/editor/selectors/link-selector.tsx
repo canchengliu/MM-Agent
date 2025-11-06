@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: MIT
 
 import { Button } from "../../ui/button";
-import { PopoverContent } from "../../ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../../ui/popover";
 import { cn } from "../../../lib/utils";
-import { Popover, PopoverTrigger } from "@radix-ui/react-popover";
 import { Check, Trash } from "lucide-react";
 import { useEditor } from "novel";
 import { useEffect, useRef } from "react";
@@ -48,19 +51,26 @@ export const LinkSelector = ({ open, onOpenChange }: LinkSelectorProps) => {
         <Button
           size="sm"
           variant="ghost"
-          className="gap-2 rounded-none border-none"
+          className="gap-2 rounded-none border-none text-label"
         >
           <p className="text-base">↗</p>
           <p
-            className={cn("underline decoration-stone-400 underline-offset-4", {
-              "text-blue-500": editor.isActive("link"),
-            })}
+            className={cn(
+              "underline decoration-border-subtle underline-offset-4",
+              {
+                "text-text-accent": editor.isActive("link"),
+              },
+            )}
           >
             Link
           </p>
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-60 p-0" sideOffset={10}>
+      <PopoverContent
+        align="start"
+        className="w-60 border border-border-subtle bg-background-secondary p-0"
+        sideOffset={10}
+      >
         <form
           onSubmit={(e) => {
             const target = e.currentTarget as HTMLFormElement;
@@ -78,7 +88,7 @@ export const LinkSelector = ({ open, onOpenChange }: LinkSelectorProps) => {
             ref={inputRef}
             type="text"
             placeholder="Paste a link"
-            className="bg-background flex-1 p-1 text-sm outline-none"
+            className="flex-1 rounded-md border border-transparent bg-transparent px-2 py-1 text-body-medium text-text-primary outline-none placeholder:text-text-tertiary"
             defaultValue={editor.getAttributes("link").href || ""}
           />
           {editor.getAttributes("link").href ? (
@@ -86,7 +96,7 @@ export const LinkSelector = ({ open, onOpenChange }: LinkSelectorProps) => {
               size="icon"
               variant="outline"
               type="button"
-              className="flex h-8 items-center rounded-sm p-1 text-red-600 transition-all hover:bg-red-100 dark:hover:bg-red-800"
+              className="flex h-8 items-center rounded-md border-border-danger bg-transparent text-text-danger transition-colors hover:bg-background-danger"
               onClick={() => {
                 editor.chain().focus().unsetLink().run();
                 if (inputRef.current) inputRef.current.value = "";
@@ -96,7 +106,7 @@ export const LinkSelector = ({ open, onOpenChange }: LinkSelectorProps) => {
               <Trash className="h-4 w-4" />
             </Button>
           ) : (
-            <Button size="icon" className="h-8">
+            <Button size="icon" className="h-8" variant="secondary">
               <Check className="h-4 w-4" />
             </Button>
           )}

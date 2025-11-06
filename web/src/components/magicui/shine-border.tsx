@@ -2,6 +2,7 @@
 
 import * as React from "react";
 
+import { usePrefersReducedMotion } from "~/lib/a11y/motion-preferences";
 import { cn } from "~/lib/utils";
 
 interface ShineBorderProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -17,7 +18,7 @@ interface ShineBorderProps extends React.HTMLAttributes<HTMLDivElement> {
   duration?: number;
   /**
    * Color of the border, can be a single color or an array of colors
-   * @default "#000000"
+   * @default ["color-mix(in srgb, var(--color-border-decorative) 80%, transparent)", "color-mix(in srgb, var(--color-glow-pulse) 65%, transparent)"]
    */
   shineColor?: string | string[];
 }
@@ -30,11 +31,16 @@ interface ShineBorderProps extends React.HTMLAttributes<HTMLDivElement> {
 export function ShineBorder({
   borderWidth = 1,
   duration = 14,
-  shineColor = "#000000",
+  shineColor = [
+    "color-mix(in srgb, var(--color-border-decorative) 80%, transparent)",
+    "color-mix(in srgb, var(--color-glow-pulse) 65%, transparent)",
+  ],
   className,
   style,
   ...props
 }: ShineBorderProps) {
+  const prefersReducedMotion = usePrefersReducedMotion();
+
   return (
     <div
       style={
@@ -50,11 +56,13 @@ export function ShineBorder({
           WebkitMaskComposite: "xor",
           maskComposite: "exclude",
           padding: "var(--border-width)",
+          animationPlayState: prefersReducedMotion ? "paused" : undefined,
+          backgroundPosition: prefersReducedMotion ? "50% 50%" : undefined,
           ...style,
         } as React.CSSProperties
       }
       className={cn(
-        "pointer-events-none absolute inset-0 size-full rounded-[inherit] will-change-[background-position] motion-safe:animate-shine",
+        "pointer-events-none absolute inset-0 size-full rounded-[inherit] will-change-[background-position] motion-safe:animate-shine motion-reduce:animate-none",
         className,
       )}
       {...props}

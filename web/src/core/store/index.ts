@@ -2,3 +2,4 @@
 // SPDX-License-Identifier: MIT
 
 export * from "./settings-store";
+export * from "./export-store";

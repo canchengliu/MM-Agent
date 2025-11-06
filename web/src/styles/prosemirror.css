@@ -1,4 +1,41 @@
+:root {
+  --editor-code-bg: color-mix(
+    in srgb,
+    var(--color-background-secondary) 92%,
+    transparent
+  );
+  --editor-code-border: var(--color-border-subtle);
+  --editor-code-inline-bg: color-mix(
+    in srgb,
+    var(--color-background-tertiary) 85%,
+    transparent
+  );
+  --editor-code-token-keyword: var(--color-text-accent);
+  --editor-code-token-attr: var(--color-stage-2);
+  --editor-code-token-number: var(--color-text-warning);
+  --editor-code-token-string: var(--color-text-success);
+  --editor-code-token-comment: var(--color-text-tertiary);
+  --editor-code-token-strong: var(--color-text-primary);
+}
+
+.dark {
+  --editor-code-bg: color-mix(
+    in srgb,
+    var(--color-background-secondary) 70%,
+    transparent
+  );
+  --editor-code-inline-bg: color-mix(
+    in srgb,
+    var(--color-background-tertiary) 65%,
+    transparent
+  );
+}
+
 .prose {
+  max-width: min(100%, var(--editor-prose-max-width, 75ch));
+}
+
+.prose.inline-editor {
   max-width: inherit;
 }
 
@@ -12,51 +49,47 @@
 
 .prose.inline-editor .is-empty.placeholder {
   display: block;
+  color: var(--color-text-tertiary);
+  font-size: 0.875rem;
   opacity: 0.65;
-  font-size: 14px;
 }
 
 .ProseMirror {
   line-height: 1.75;
 }
 
-.ProseMirror .is-editor-empty:first-child::before {
-  content: attr(data-placeholder);
-  float: left;
-  color: hsl(var(--muted-foreground));
-  pointer-events: none;
-  height: 0;
-}
-
+.ProseMirror .is-editor-empty:first-child::before,
 .ProseMirror p.is-empty::before {
+  color: var(--color-text-tertiary);
   content: attr(data-placeholder);
   float: left;
-  color: hsl(var(--muted-foreground));
-  pointer-events: none;
   height: 0;
+  pointer-events: none;
 }
 
 .ProseMirror .mention {
-  background-color: var(--purple-light);
-  border-radius: 0.4rem;
+  background-color: color-mix(
+    in srgb,
+    var(--color-background-interactive) 18%,
+    transparent
+  );
+  border-radius: 0.375rem;
   box-decoration-break: clone;
-  color: var(--brand);
-  padding: 0.1rem 0.3rem;
+  color: var(--color-text-accent);
+  padding: 0.125rem 0.375rem;
 }
 
-/* Custom image styles */
-
 .ProseMirror img {
-  transition: filter 0.1s ease-in-out;
+  transition: filter 0.15s ease-in-out;
 
   &:hover {
     cursor: pointer;
-    filter: brightness(90%);
+    filter: brightness(0.95);
   }
 
   &.ProseMirror-selectednode {
-    outline: 3px solid #5abbf7;
-    filter: brightness(90%);
+    filter: brightness(0.95);
+    outline: 3px solid var(--color-border-focused);
   }
 }
 
@@ -64,37 +97,42 @@
   position: relative;
 
   &:before {
-    content: "";
+    animation: spinning 0.6s linear infinite;
+    border: 3px solid var(--color-border-subtle);
+    border-top-color: var(--color-border-interactive);
+    border-radius: 9999px;
     box-sizing: border-box;
+    content: "";
+    height: 36px;
+    left: 50%;
     position: absolute;
     top: 50%;
-    left: 50%;
+    transform: translate(-50%, -50%);
     width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    border: 3px solid var(--novel-stone-200);
-    border-top-color: var(--novel-stone-800);
-    animation: spinning 0.6s linear infinite;
   }
 }
 
 .ProseMirror pre {
-  background: #0d0d0d;
-  border-radius: 0.5rem;
-  color: #fff;
-  font-family: "JetBrainsMono", monospace;
-  padding: 0.75rem 1rem;
+  background: var(--editor-code-bg);
+  border: 1px solid var(--editor-code-border);
+  border-radius: 0.75rem;
+  color: var(--color-text-primary);
+  font-family: var(--font-geist-mono, var(--font-mono)),
+    ui-monospace,
+    SFMono-Regular,
+    monospace;
+  padding: 1rem 1.25rem;
 
   code {
     background: none;
     color: inherit;
-    font-size: 0.8rem;
+    font-size: 0.85rem;
     padding: 0;
   }
 
   .hljs-comment,
   .hljs-quote {
-    color: #616161;
+    color: var(--editor-code-token-comment);
   }
 
   .hljs-variable,
@@ -102,12 +140,11 @@
   .hljs-attribute,
   .hljs-tag,
   .hljs-name,
-  .hljs-regexp,
-  .hljs-link,
-  .hljs-name,
   .hljs-selector-id,
-  .hljs-selector-class {
-    color: #f98181;
+  .hljs-selector-class,
+  .hljs-regexp,
+  .hljs-link {
+    color: var(--editor-code-token-attr);
   }
 
   .hljs-number,
@@ -117,23 +154,23 @@
   .hljs-literal,
   .hljs-type,
   .hljs-params {
-    color: #fbbc88;
+    color: var(--editor-code-token-number);
   }
 
   .hljs-string,
   .hljs-symbol,
   .hljs-bullet {
-    color: #b9f18d;
+    color: var(--editor-code-token-string);
   }
 
   .hljs-title,
   .hljs-section {
-    color: #faf594;
+    color: var(--editor-code-token-keyword);
   }
 
   .hljs-keyword,
   .hljs-selector-tag {
-    color: #70cff8;
+    color: var(--editor-code-token-keyword);
   }
 
   .hljs-emphasis {
@@ -141,6 +178,7 @@
   }
 
   .hljs-strong {
+    color: var(--editor-code-token-strong);
     font-weight: 700;
   }
 }
@@ -150,8 +188,6 @@
     transform: rotate(360deg);
   }
 }
-
-/* Custom TODO list checkboxes – shoutout to this awesome tutorial: https://moderncss.dev/pure-css-custom-checkbox-style/ */
 
 ul[data-type="taskList"] li > label {
   margin-right: 0.2rem;
@@ -167,84 +203,103 @@ ul[data-type="taskList"] li > label {
 ul[data-type="taskList"] li > label input[type="checkbox"] {
   -webkit-appearance: none;
   appearance: none;
-  background-color: hsl(var(--background));
-  margin: 0;
+  background-color: var(--color-background-primary);
+  border: 2px solid var(--color-border-default);
+  box-shadow: inset 0 0 0 1px transparent;
   cursor: pointer;
-  width: 1.2em;
+  display: grid;
   height: 1.2em;
+  margin: 0 0.3rem 0 0;
+  place-content: center;
   position: relative;
   top: 5px;
-  border: 2px solid hsl(var(--border));
-  margin-right: 0.3rem;
-  display: grid;
-  place-content: center;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+  width: 1.2em;
 
   &:hover {
-    background-color: hsl(var(--accent));
+    background-color: var(--color-background-tertiary);
   }
 
   &:active {
-    background-color: hsl(var(--accent));
+    background-color: var(--color-background-tertiary);
   }
 
   &::before {
+    clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
     content: "";
-    width: 0.65em;
     height: 0.65em;
     transform: scale(0);
-    transition: 120ms transform ease-in-out;
-    box-shadow: inset 1em 1em;
     transform-origin: center;
-    clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+    transition: 120ms transform ease-in-out;
+    width: 0.65em;
   }
 
-  &:checked::before {
-    transform: scale(1);
+  &:checked {
+    background-color: var(--color-background-interactive);
+    border-color: var(--color-background-interactive);
+
+    &::before {
+      background-color: var(--color-text-on-interactive);
+      box-shadow: inset 1em 1em var(--color-text-on-interactive);
+      transform: scale(1);
+    }
   }
 }
 
 ul[data-type="taskList"] li[data-checked="true"] > div > p {
-  color: var(--muted-foreground);
+  color: var(--color-text-tertiary);
   text-decoration: line-through;
   text-decoration-thickness: 2px;
 }
-
-/* Overwrite tippy-box original max-width */
 
 .tippy-box {
   max-width: 400px !important;
 }
 
 .ProseMirror:not(.dragging) .ProseMirror-selectednode {
-  outline: none !important;
-  background-color: var(--novel-highlight-blue);
-  transition: background-color 0.2s;
+  background-color: color-mix(
+    in srgb,
+    var(--color-background-interactive) 12%,
+    transparent
+  );
   box-shadow: none;
+  outline: none !important;
+  transition: background-color 0.2s;
 }
 
 .drag-handle {
-  position: fixed;
-  opacity: 1;
-  transition: opacity ease-in 0.2s;
-  border-radius: 0.25rem;
-
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' style='fill: rgba(0, 0, 0, 0.5)'%3E%3Cpath d='M3,2 C2.44771525,2 2,1.55228475 2,1 C2,0.44771525 2.44771525,0 3,0 C3.55228475,0 4,0.44771525 4,1 C4,1.55228475 3.55228475,2 3,2 Z M3,6 C2.44771525,6 2,5.55228475 2,5 C2,4.44771525 2.44771525,4 3,4 C3.55228475,4 4,4.44771525 4,5 C4,5.55228475 3.55228475,6 3,6 Z M3,10 C2.44771525,10 2,9.55228475 2,9 C2,8.44771525 2.44771525,8 3,8 C3.55228475,8 4,8.44771525 4,9 C4,9.55228475 3.55228475,10 3,10 Z M7,2 C6.44771525,2 6,1.55228475 6,1 C6,0.44771525 6.44771525,0 7,0 C7.55228475,0 8,0.44771525 8,1 C8,1.55228475 7.55228475,2 7,2 Z M7,6 C6.44771525,6 6,5.55228475 6,5 C6,4.44771525 6.44771525,4 7,4 C7.55228475,4 8,4.44771525 8,5 C8,5.55228475 7.55228475,6 7,6 Z M7,10 C6.44771525,10 6,9.55228475 6,9 C6,8.44771525 6.44771525,8 7,8 C7.55228475,8 8,8.44771525 8,9 C8,9.55228475 7.55228475,10 7,10 Z'%3E%3C/path%3E%3C/svg%3E");
-  background-size: calc(0.5em + 0.375rem) calc(0.5em + 0.375rem);
-  background-repeat: no-repeat;
-  background-position: center;
-  width: 1.2rem;
-  height: 1.5rem;
-  z-index: 50;
+  border-radius: 0.375rem;
+  color: var(--color-text-tertiary);
   cursor: grab;
+  height: 1.5rem;
+  opacity: 1;
+  position: fixed;
+  transition: opacity 0.2s ease-in;
+  width: 1.2rem;
+  z-index: 50;
+
+  background-image: radial-gradient(currentColor 12%, transparent 13%),
+    radial-gradient(currentColor 12%, transparent 13%);
+  background-position:
+    35% 30%,
+    65% 70%;
+  background-repeat: no-repeat;
+  background-size: 0.35rem 0.35rem;
 
   &:hover {
-    background-color: var(--novel-stone-100);
-    transition: background-color 0.2s;
+    background-color: color-mix(
+      in srgb,
+      var(--color-background-tertiary) 80%,
+      transparent
+    );
   }
 
   &:active {
-    background-color: var(--novel-stone-200);
-    transition: background-color 0.2s;
+    background-color: color-mix(
+      in srgb,
+      var(--color-background-tertiary) 95%,
+      transparent
+    );
     cursor: grabbing;
   }
 
@@ -260,28 +315,27 @@ ul[data-type="taskList"] li[data-checked="true"] > div > p {
 }
 
 .dark .drag-handle {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' style='fill: rgba(255, 255, 255, 0.5)'%3E%3Cpath d='M3,2 C2.44771525,2 2,1.55228475 2,1 C2,0.44771525 2.44771525,0 3,0 C3.55228475,0 4,0.44771525 4,1 C4,1.55228475 3.55228475,2 3,2 Z M3,6 C2.44771525,6 2,5.55228475 2,5 C2,4.44771525 2.44771525,4 3,4 C3.55228475,4 4,4.44771525 4,5 C4,5.55228475 3.55228475,6 3,6 Z M3,10 C2.44771525,10 2,9.55228475 2,9 C2,8.44771525 2.44771525,8 3,8 C3.55228475,8 4,8.44771525 4,9 C4,9.55228475 3.55228475,10 3,10 Z M7,2 C6.44771525,2 6,1.55228475 6,1 C6,0.44771525 6.44771525,0 7,0 C7.55228475,0 8,0.44771525 8,1 C8,1.55228475 7.55228475,2 7,2 Z M7,6 C6.44771525,6 6,5.55228475 6,5 C6,4.44771525 6.44771525,4 7,4 C7.55228475,4 8,4.44771525 8,5 C8,5.55228475 7.55228475,6 7,6 Z M7,10 C6.44771525,10 6,9.55228475 6,9 C6,8.44771525 6.44771525,8 7,8 C7.55228475,8 8,8.44771525 8,9 C8,9.55228475 7.55228475,10 7,10 Z'%3E%3C/path%3E%3C/svg%3E");
+  color: var(--color-text-secondary);
 }
 
-/* Custom Youtube Video CSS */
 iframe {
-  border: 8px solid #ffd00027;
-  border-radius: 4px;
-  min-width: 200px;
-  min-height: 200px;
+  border: 1px solid var(--color-border-decorative);
+  border-radius: 0.5rem;
   display: block;
-  outline: 0px solid transparent;
+  min-height: 200px;
+  min-width: 200px;
+  outline: 0 solid transparent;
 }
 
 div[data-youtube-video] > iframe {
-  cursor: move;
   aspect-ratio: 16 / 9;
+  cursor: move;
   width: 100%;
 }
 
 .ProseMirror-selectednode iframe {
+  outline: 3px solid var(--color-text-warning);
   transition: outline 0.15s;
-  outline: 6px solid #fbbf24;
 }
 
 @media only screen and (max-width: 480px) {
@@ -296,20 +350,31 @@ div[data-youtube-video] > iframe {
   }
 }
 
-/* CSS for bold coloring and highlighting issue*/
-span[style] > strong {
-  color: inherit;
-}
-
+span[style] > strong,
 mark[style] > strong {
   color: inherit;
 }
 
-.prose ol, .prose ul {
-  margin-left: 1.2em;
-  color: #b0b0b0;
+.prose ol,
+.prose ul {
+  color: var(--color-text-secondary);
   font-size: 0.98em;
+  margin-left: 1.25em;
 }
-.prose ol > li::marker, .prose ul > li::marker {
-  color: #b0b0b0;
+
+.prose ol > li::marker,
+.prose ul > li::marker {
+  color: var(--color-text-tertiary);
+}
+
+.prose :not(pre) > code {
+  background-color: var(--editor-code-inline-bg);
+  border-radius: 0.375rem;
+  color: var(--color-text-accent);
+  font-family: var(--font-geist-mono, var(--font-mono)),
+    ui-monospace,
+    SFMono-Regular,
+    monospace;
+  font-size: 0.85em;
+  padding: 0.125rem 0.375rem;
 }

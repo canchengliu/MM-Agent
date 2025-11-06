@@ -9,6 +9,8 @@ import React, {
   useState,
 } from "react";
 
+import { usePrefersReducedMotion } from "~/lib/a11y/motion-preferences";
+
 interface FlickeringGridProps extends React.HTMLAttributes<HTMLDivElement> {
   squareSize?: number;
   gridGap?: number;
@@ -24,7 +26,7 @@ export const FlickeringGrid: React.FC<FlickeringGridProps> = ({
   squareSize = 4,
   gridGap = 6,
   flickerChance = 0.3,
-  color = "rgb(0, 0, 0)",
+  color,
   width,
   height,
   className,
@@ -35,22 +37,42 @@ export const FlickeringGrid: React.FC<FlickeringGridProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [isInView, setIsInView] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  const prefersReducedMotion = usePrefersReducedMotion();
 
   const memoizedColor = useMemo(() => {
-    const toRGBA = (color: string) => {
+    const toRGBA = (sourceColor: string) => {
       if (typeof window === "undefined") {
-        return `rgba(0, 0, 0,`;
+        return "rgba(17, 24, 39,";
       }
       const canvas = document.createElement("canvas");
       canvas.width = canvas.height = 1;
       const ctx = canvas.getContext("2d");
-      if (!ctx) return "rgba(255, 0, 0,";
-      ctx.fillStyle = color;
+      if (!ctx) return "rgba(17, 24, 39,";
+      ctx.fillStyle = sourceColor;
       ctx.fillRect(0, 0, 1, 1);
       const [r, g, b] = Array.from(ctx.getImageData(0, 0, 1, 1).data);
       return `rgba(${r}, ${g}, ${b},`;
     };
-    return toRGBA(color);
+
+    const resolveColorToken = (value: string) => {
+      if (typeof window === "undefined") {
+        return value;
+      }
+      const trimmed = value.trim();
+      if (!trimmed.startsWith("var(")) {
+        return trimmed;
+      }
+      const varName = trimmed.slice(4, -1).trim();
+      const resolved = getComputedStyle(
+        document.documentElement,
+      ).getPropertyValue(varName);
+      return resolved ? resolved.trim() : trimmed;
+    };
+
+    const target =
+      color ?? "var(--color-background-tertiary)";
+
+    return toRGBA(resolveColorToken(target));
   }, [color]);
 
   const setupCanvas = useCallback(
@@ -130,13 +152,24 @@ export const FlickeringGrid: React.FC<FlickeringGridProps> = ({
       const newHeight = height || container.clientHeight;
       setCanvasSize({ width: newWidth, height: newHeight });
       gridParams = setupCanvas(canvas, newWidth, newHeight);
+      if (prefersReducedMotion && gridParams && ctx) {
+        drawGrid(
+          ctx,
+          canvas.width,
+          canvas.height,
+          gridParams.cols,
+          gridParams.rows,
+          gridParams.squares,
+          gridParams.dpr,
+        );
+      }
     };
 
     updateCanvasSize();
 
     let lastTime = 0;
     const animate = (time: number) => {
-      if (!isInView) return;
+      if (!isInView || prefersReducedMotion) return;
 
       const deltaTime = (time - lastTime) / 1000;
       lastTime = time;
@@ -169,8 +202,18 @@ export const FlickeringGrid: React.FC<FlickeringGridProps> = ({
 
     intersectionObserver.observe(canvas);
 
-    if (isInView) {
+    if (isInView && !prefersReducedMotion) {
       animationFrameId = requestAnimationFrame(animate);
+    } else if (prefersReducedMotion && gridParams && ctx) {
+      drawGrid(
+        ctx,
+        canvas.width,
+        canvas.height,
+        gridParams.cols,
+        gridParams.rows,
+        gridParams.squares,
+        gridParams.dpr,
+      );
     }
 
     return () => {
@@ -178,7 +221,15 @@ export const FlickeringGrid: React.FC<FlickeringGridProps> = ({
       resizeObserver.disconnect();
       intersectionObserver.disconnect();
     };
-  }, [setupCanvas, updateSquares, drawGrid, width, height, isInView]);
+  }, [
+    setupCanvas,
+    updateSquares,
+    drawGrid,
+    width,
+    height,
+    isInView,
+    prefersReducedMotion,
+  ]);
 
   return (
     <div

@@ -92,7 +92,7 @@ const ReportEditor = ({ content, onMarkdownChange }: ReportEditorProps) => {
           immediatelyRender={false}
           initialContent={initialContent as JSONContent}
           extensions={extensions}
-          className="border-muted relative h-full w-full"
+          className="relative h-full w-full rounded-xl border border-border-subtle bg-background-primary"
           editorProps={{
             handleDOMEvents: {
               keydown: (_view, event) => handleCommandNavigation(event),
@@ -103,7 +103,7 @@ const ReportEditor = ({ content, onMarkdownChange }: ReportEditorProps) => {
               handleImageDrop(view, event, moved, uploadFn),
             attributes: {
               class:
-                "prose prose-base prose-p:my-4 dark:prose-invert prose-headings:font-title font-default focus:outline-none max-w-full",
+                "prose prose-base dark:prose-invert text-text-primary focus:outline-none prose-headings:text-text-primary prose-strong:text-text-primary prose-a:text-text-accent prose-code:font-mono prose-code:text-text-accent prose-pre:rounded-lg prose-pre:border prose-pre:border-border-subtle prose-pre:bg-background-secondary prose-ol:marker:text-text-secondary prose-ul:marker:text-text-secondary",
             },
           }}
           onUpdate={({ editor }) => {
@@ -112,8 +112,8 @@ const ReportEditor = ({ content, onMarkdownChange }: ReportEditorProps) => {
           }}
           slotAfter={<ImageResizer />}
         >
-          <EditorCommand className="border-muted bg-background z-50 h-auto max-h-[330px] overflow-y-auto rounded-md border px-1 py-2 shadow-md transition-all">
-            <EditorCommandEmpty className="text-muted-foreground px-2">
+          <EditorCommand className="z-50 h-auto max-h-[330px] overflow-y-auto rounded-lg border border-border-subtle bg-background-secondary px-1 py-2 shadow-lg transition-all">
+            <EditorCommandEmpty className="px-2 text-caption text-text-tertiary">
               No results
             </EditorCommandEmpty>
             <EditorCommandList>
@@ -121,15 +121,17 @@ const ReportEditor = ({ content, onMarkdownChange }: ReportEditorProps) => {
                 <EditorCommandItem
                   value={item.title}
                   onCommand={(val) => item.command?.(val)}
-                  className="hover:bg-accent aria-selected:bg-accent flex w-full items-center space-x-2 rounded-md px-2 py-1 text-left text-sm"
+                  className="flex w-full items-center space-x-2 rounded-md px-2 py-1 text-left text-body-medium transition-colors hover:bg-background-tertiary/60 aria-selected:bg-background-tertiary/60"
                   key={item.title}
                 >
-                  <div className="border-muted bg-background flex h-10 w-10 items-center justify-center rounded-md border">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-md border border-border-subtle bg-background-primary">
                     {item.icon}
                   </div>
                   <div>
-                    <p className="font-medium">{item.title}</p>
-                    <p className="text-muted-foreground text-xs">
+                    <p className="text-label font-medium text-text-primary">
+                      {item.title}
+                    </p>
+                    <p className="text-caption text-text-tertiary">
                       {item.description}
                     </p>
                   </div>

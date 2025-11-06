@@ -3,6 +3,7 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 
+import { usePrefersReducedMotion } from "~/lib/a11y/motion-preferences";
 import { cn } from "~/lib/utils";
 
 export function RollingText({
@@ -12,6 +13,19 @@ export function RollingText({
   className?: string;
   children?: string | string[];
 }) {
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const contentKey = Array.isArray(children)
+    ? children.join("::")
+    : children ?? "rolling-text-empty";
+
+  if (prefersReducedMotion) {
+    return (
+      <span className={cn("relative flex h-[2em] items-center", className)}>
+        <span className="truncate">{Array.isArray(children) ? children.join(" ") : children}</span>
+      </span>
+    );
+  }
+
   return (
     <span
       className={cn(
@@ -21,6 +35,7 @@ export function RollingText({
     >
       <AnimatePresence mode="popLayout">
         <motion.div
+          key={contentKey}
           className="absolute w-fit"
           style={{ transition: "all 0.3s ease-in-out" }}
           initial={{ y: "100%", opacity: 0 }}

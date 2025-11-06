@@ -39,7 +39,7 @@ const placeholder = Placeholder;
 const tiptapLink = TiptapLink.configure({
   HTMLAttributes: {
     class: cx(
-      "text-muted-foreground underline underline-offset-[3px] hover:text-primary transition-colors cursor-pointer",
+      "text-text-accent underline underline-offset-[3px] transition-colors hover:text-text-primary",
     ),
   },
 });
@@ -48,65 +48,86 @@ const tiptapImage = TiptapImage.extend({
   addProseMirrorPlugins() {
     return [
       UploadImagesPlugin({
-        imageClass: cx("opacity-40 rounded-lg border border-stone-200"),
+        imageClass: cx(
+          "opacity-40 rounded-lg border border-border-subtle bg-background-secondary object-contain",
+        ),
       }),
     ];
   },
 }).configure({
   allowBase64: true,
   HTMLAttributes: {
-    class: cx("rounded-lg border border-muted"),
+    class: cx(
+      "rounded-lg border border-border-subtle bg-background-secondary transition-[filter] hover:brightness-95",
+    ),
   },
 });
 
 const updatedImage = UpdatedImage.configure({
   HTMLAttributes: {
-    class: cx("rounded-lg border border-muted"),
+    class: cx(
+      "rounded-lg border border-border-subtle bg-background-secondary transition-[filter] hover:brightness-95",
+    ),
   },
 });
 
 const taskList = TaskList.configure({
   HTMLAttributes: {
-    class: cx("not-prose pl-2 "),
+    class: cx("not-prose space-y-3 pl-0"),
   },
 });
 const taskItem = TaskItem.configure({
   HTMLAttributes: {
-    class: cx("flex gap-2 items-start my-4"),
+    class: cx("flex items-start gap-2 text-body-medium text-text-primary"),
   },
   nested: true,
 });
 
 const horizontalRule = HorizontalRule.configure({
-  HTMLAttributes: {},
+  HTMLAttributes: {
+    class: cx("my-10 h-px border-0 bg-border-subtle"),
+  },
 });
 
 const starterKit = StarterKit.configure({
   bulletList: {
-    HTMLAttributes: {},
+    HTMLAttributes: {
+      class: cx(
+        "list-disc pl-6 text-body-medium text-text-primary marker:text-text-secondary",
+      ),
+    },
   },
   orderedList: {
     HTMLAttributes: {
-      class: cx("list-decimal list-outside leading-3 -mt-2"),
+      class: cx(
+        "list-decimal pl-6 text-body-medium text-text-primary marker:text-text-secondary",
+      ),
     },
   },
   listItem: {
-    HTMLAttributes: {},
+    HTMLAttributes: {
+      class: cx("text-body-medium text-text-primary"),
+    },
   },
   blockquote: {
     HTMLAttributes: {
-      class: cx("border-l-4 border-primary"),
+      class: cx(
+        "relative border-l-2 border-border-interactive bg-background-secondary/60 pl-6 italic text-text-secondary",
+      ),
     },
   },
   codeBlock: false,
   code: {
     HTMLAttributes: {
+      class: cx(
+        "rounded bg-background-tertiary/60 px-1 py-0.5 font-mono text-text-accent",
+      ),
       spellcheck: "false",
     },
   },
   horizontalRule: false,
   dropcursor: {
-    color: "#DBEAFE",
+    color: "var(--color-border-focused)",
     width: 4,
   },
   gapcursor: false,
@@ -116,25 +137,34 @@ const codeBlockLowlight = CodeBlockLowlight.configure({
   // configure lowlight: common /  all / use highlightJS in case there is a need to specify certain language grammars only
   // common: covers 37 language grammars which should be good enough in most cases
   lowlight: createLowlight(common),
+  HTMLAttributes: {
+    class: cx(
+      "relative rounded-lg border border-border-subtle bg-background-secondary text-text-primary shadow-sm font-mono",
+    ),
+  },
 });
 
 const youtube = Youtube.configure({
   HTMLAttributes: {
-    class: cx("rounded-lg border border-muted"),
+    class: cx(
+      "rounded-lg border border-border-subtle bg-background-secondary",
+    ),
   },
   inline: false,
 });
 
 const twitter = Twitter.configure({
   HTMLAttributes: {
-    class: cx("not-prose"),
+    class: cx("not-prose rounded-lg border border-border-subtle"),
   },
   inline: false,
 });
 
 const mathematics = MathematicsWithMarkdown.configure({
   HTMLAttributes: {
-    class: cx("text-foreground rounded p-1 hover:bg-accent cursor-pointer"),
+    class: cx(
+      "cursor-pointer rounded px-1 text-text-accent transition-colors hover:bg-background-tertiary/60",
+    ),
   },
   katexOptions: {
     throwOnError: false,

@@ -6,3 +6,21 @@ export interface ApiClientConfig {
 }
 
 export type StreamEvent = never;
+
+export enum ExportStatus {
+  Queued = "QUEUED",
+  InProgress = "IN_PROGRESS",
+  Complete = "COMPLETE",
+  Failed = "FAILED",
+}
+
+export interface ExportJobTriggered {
+  job_id: string;
+}
+
+export interface ExportJobStatus {
+  job_id: string;
+  status: ExportStatus;
+  result_artifact_id: string | null;
+  error: string | null;
+}

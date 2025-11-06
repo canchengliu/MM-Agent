@@ -3,14 +3,18 @@
 
 import "~/styles/globals.css";
 
+import { GeistMono } from "geist/font/mono";
+import { GeistSans } from "geist/font/sans";
 import { type Metadata } from "next";
-import { Geist } from "next/font/google";
 import Script from "next/script";
-import { NextIntlClientProvider } from 'next-intl';
-import { getLocale, getMessages } from 'next-intl/server';
+import { NextIntlClientProvider } from "next-intl";
+import { getLocale, getMessages } from "next-intl/server";
 
 import { ThemeProviderWrapper } from "~/components/deer-flow/theme-provider-wrapper";
+import { ExportStatusMonitor } from "~/components/providers/ExportStatusMonitor";
+import { QueryProvider } from "~/components/providers/query-provider";
 import { env } from "~/env";
+import { cn } from "~/lib/utils";
 
 import { Toaster } from "../components/deer-flow/toaster";
 
@@ -21,9 +25,14 @@ export const metadata: Metadata = {
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 
-const geist = Geist({
+const geistSans = GeistSans({
   subsets: ["latin"],
   variable: "--font-geist-sans",
+});
+
+const geistMono = GeistMono({
+  subsets: ["latin"],
+  variable: "--font-geist-mono",
 });
 
 export default async function RootLayout({
@@ -31,9 +40,13 @@ export default async function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   const locale = await getLocale();
   const messages = await getMessages();
-  
+
   return (
-    <html lang={locale} className={`${geist.variable}`} suppressHydrationWarning>
+    <html
+      lang={locale}
+      className={cn(geistSans.variable, geistMono.variable)}
+      suppressHydrationWarning
+    >
       <head>
         {/* Define isSpace function globally to fix markdown-it issues with Next.js + Turbopack
           https://github.com/markdown-it/markdown-it/issues/1082#issuecomment-2749656365 */}
@@ -49,8 +62,13 @@ export default async function RootLayout({
       </head>
       <body className="bg-app">
         <NextIntlClientProvider messages={messages}>
-          <ThemeProviderWrapper>{children}</ThemeProviderWrapper>
-          <Toaster />
+          <ThemeProviderWrapper>
+            <QueryProvider>
+              {children}
+              <ExportStatusMonitor />
+              <Toaster />
+            </QueryProvider>
+          </ThemeProviderWrapper>
         </NextIntlClientProvider>
         {
           // NO USER BEHAVIOR TRACKING OR PRIVATE DATA COLLECTION BY DEFAULT

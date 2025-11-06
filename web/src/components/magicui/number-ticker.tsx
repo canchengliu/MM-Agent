@@ -3,6 +3,7 @@
 import { useInView, useMotionValue, useSpring } from "motion/react";
 import { type ComponentPropsWithoutRef, useEffect, useRef } from "react";
 
+import { usePrefersReducedMotion } from "~/lib/a11y/motion-preferences";
 import { cn } from "~/lib/utils";
 
 interface NumberTickerProps extends ComponentPropsWithoutRef<"span"> {
@@ -29,34 +30,54 @@ export function NumberTicker({
     stiffness: 100,
   });
   const isInView = useInView(ref, { once: true, margin: "0px" });
+  const prefersReducedMotion = usePrefersReducedMotion();
 
   useEffect(() => {
+    if (prefersReducedMotion && ref.current) {
+      ref.current.textContent = Intl.NumberFormat("en-US", {
+        minimumFractionDigits: decimalPlaces,
+        maximumFractionDigits: decimalPlaces,
+      }).format(value);
+      return;
+    }
+
     if (isInView) {
       const timer = setTimeout(() => {
         motionValue.set(direction === "down" ? startValue : value);
       }, delay * 1000);
       return () => clearTimeout(timer);
     }
-  }, [motionValue, isInView, delay, value, direction, startValue]);
+  }, [
+    prefersReducedMotion,
+    motionValue,
+    isInView,
+    delay,
+    value,
+    direction,
+    startValue,
+    decimalPlaces,
+  ]);
 
   useEffect(
     () =>
-      springValue.on("change", (latest) => {
-        if (ref.current) {
-          ref.current.textContent = Intl.NumberFormat("en-US", {
-            minimumFractionDigits: decimalPlaces,
-            maximumFractionDigits: decimalPlaces,
-          }).format(Number(latest.toFixed(decimalPlaces)));
-        }
-      }),
-    [springValue, decimalPlaces],
+      prefersReducedMotion
+        ? undefined
+        : springValue.on("change", (latest) => {
+            if (ref.current) {
+              ref.current.textContent = Intl.NumberFormat("en-US", {
+                minimumFractionDigits: decimalPlaces,
+                maximumFractionDigits: decimalPlaces,
+              }).format(Number(latest.toFixed(decimalPlaces)));
+            }
+          }),
+    [springValue, decimalPlaces, prefersReducedMotion],
   );
 
   return (
     <span
       ref={ref}
       className={cn(
-        "inline-block tracking-wider text-black tabular-nums dark:text-white",
+        "inline-block tracking-wider text-text-accent tabular-nums",
         className,
       )}
       {...props}

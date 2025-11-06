@@ -5,25 +5,33 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "~/lib/utils"
 
 const badgeVariants = cva(
-  "inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium w-fit whitespace-nowrap shrink-0 [&>svg]:size-3 gap-1 [&>svg]:pointer-events-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive transition-[color,box-shadow] overflow-hidden",
+  [
+    "inline-flex w-fit shrink-0 items-center justify-center gap-1 rounded-sm border px-2 py-0.5",
+    "text-caption font-medium transition-[background-color,color,border-color,box-shadow]",
+    "duration-150 ease-[cubic-bezier(0,0,0.2,1)]",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focused focus-visible:ring-offset-2 focus-visible:ring-offset-background-primary",
+    "disabled:pointer-events-none disabled:opacity-40",
+    "aria-invalid:border-border-danger aria-invalid:ring-border-danger/20",
+    "[&>svg]:size-3 [&>svg]:pointer-events-none [&>svg]:shrink-0",
+  ].join(" "),
   {
     variants: {
       variant: {
         default:
-          "border-transparent bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
+          "border-border-interactive bg-background-tertiary/80 text-text-primary",
         secondary:
-          "border-transparent bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90",
+          "border-border-subtle bg-background-secondary text-text-secondary",
         destructive:
-          "border-transparent bg-destructive text-white [a&]:hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
+          "border-border-danger bg-background-danger/20 text-text-danger focus-visible:ring-border-danger",
         outline:
-          "text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
+          "border-border-interactive bg-transparent text-text-accent [a&]:hover:bg-background-tertiary/60",
       },
     },
     defaultVariants: {
       variant: "default",
     },
-  }
-)
+  },
+);
 
 function Badge({
   className,

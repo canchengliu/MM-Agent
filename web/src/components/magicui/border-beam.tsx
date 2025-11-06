@@ -1,7 +1,9 @@
 "use client";
 
+import { motion, type MotionStyle, type Transition } from "framer-motion";
+
+import { usePrefersReducedMotion } from "~/lib/a11y/motion-preferences";
 import { cn } from "~/lib/utils";
-import { motion, type MotionStyle, type Transition } from "motion/react";
 
 interface BorderBeamProps {
   /**
@@ -51,13 +53,41 @@ export const BorderBeam = ({
   size = 50,
   delay = 0,
   duration = 6,
-  colorFrom = "#ffaa40",
-  colorTo = "#9c40ff",
+  colorFrom = "var(--color-border-decorative)",
+  colorTo = "color-mix(in srgb, var(--color-glow-accent) 70%, transparent)",
   transition,
   style,
   reverse = false,
   initialOffset = 0,
 }: BorderBeamProps) => {
+  const prefersReducedMotion = usePrefersReducedMotion();
+
+  const beamStyle = {
+    width: size,
+    offsetPath: `rect(0 auto auto 0 round ${size}px)`,
+    "--color-from": colorFrom,
+    "--color-to": colorTo,
+    ...style,
+  } as MotionStyle;
+
+  if (prefersReducedMotion) {
+    return (
+      <div className="pointer-events-none absolute inset-0 rounded-[inherit] border border-transparent [mask-image:linear-gradient(transparent,transparent),linear-gradient(#000,#000)] [mask-composite:intersect] [mask-clip:padding-box,border-box]">
+        <div
+          className={cn(
+            "absolute aspect-square bg-gradient-to-l from-[var(--color-from)] via-[var(--color-to)] to-transparent motion-reduce:animate-none",
+            className,
+          )}
+          style={{
+            ...beamStyle,
+            offsetDistance: `${initialOffset}%`,
+          }}
+          aria-hidden="true"
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="pointer-events-none absolute inset-0 rounded-[inherit] border border-transparent [mask-image:linear-gradient(transparent,transparent),linear-gradient(#000,#000)] [mask-composite:intersect] [mask-clip:padding-box,border-box]">
       <motion.div
@@ -66,13 +96,10 @@ export const BorderBeam = ({
           "bg-gradient-to-l from-[var(--color-from)] via-[var(--color-to)] to-transparent",
           className,
         )}
+        aria-hidden="true"
         style={
           {
-            width: size,
-            offsetPath: `rect(0 auto auto 0 round ${size}px)`,
-            "--color-from": colorFrom,
-            "--color-to": colorTo,
-            ...style,
+            ...beamStyle,
           } as MotionStyle
         }
         initial={{ offsetDistance: `${initialOffset}%` }}
