@@ -4,9 +4,13 @@
 import { env } from "~/env";
 
 export function resolveServiceURL(path: string) {
-  let BASE_URL = env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/";
-  if (!BASE_URL.endsWith("/")) {
-    BASE_URL += "/";
+  let baseUrl = env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1/";
+
+  if (!baseUrl.endsWith("/")) {
+    baseUrl += "/";
   }
-  return new URL(path, BASE_URL).toString();
+
+  const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
+
+  return new URL(normalizedPath, baseUrl).toString();
 }

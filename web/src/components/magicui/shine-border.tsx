@@ -1,63 +1,63 @@
-"use client";
+// Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
+// SPDX-License-Identifier: MIT
 
-import * as React from "react";
+import type { CSSProperties, HTMLAttributes } from "react";
 
 import { cn } from "~/lib/utils";
 
-interface ShineBorderProps extends React.HTMLAttributes<HTMLDivElement> {
-  /**
-   * Width of the border in pixels
-   * @default 1
-   */
+type ShineColor = string | string[];
+
+interface ShineBorderProps extends HTMLAttributes<HTMLSpanElement> {
+  shineColor?: ShineColor;
   borderWidth?: number;
-  /**
-   * Duration of the animation in seconds
-   * @default 14
-   */
   duration?: number;
-  /**
-   * Color of the border, can be a single color or an array of colors
-   * @default "#000000"
-   */
-  shineColor?: string | string[];
 }
 
-/**
- * Shine Border
- *
- * An animated background border effect component with configurable properties.
- */
-export function ShineBorder({
-  borderWidth = 1,
-  duration = 14,
-  shineColor = "#000000",
+const animationName = "shine-border__pulse";
+
+export const ShineBorder = ({
   className,
-  style,
+  shineColor = ["#818cf8", "#06b6d4", "#22d3ee"],
+  borderWidth = 2,
+  duration = 8,
   ...props
-}: ShineBorderProps) {
+}: ShineBorderProps) => {
+  const colors = Array.isArray(shineColor) ? shineColor : [shineColor];
+  const gradient = colors.join(", ");
+
+  const style: CSSProperties = {
+    borderRadius: "inherit",
+    padding: borderWidth,
+    background: `linear-gradient(120deg, ${gradient})`,
+    backgroundSize: "200% 200%",
+    animation: `${animationName} ${duration}s ease infinite`,
+    WebkitMask: "linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)",
+    mask: "linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)",
+    WebkitMaskComposite: "xor",
+    maskComposite: "exclude",
+  };
+
   return (
-    <div
-      style={
-        {
-          "--border-width": `${borderWidth}px`,
-          "--duration": `${duration}s`,
-          backgroundImage: `radial-gradient(transparent,transparent, ${
-            Array.isArray(shineColor) ? shineColor.join(",") : shineColor
-          },transparent,transparent)`,
-          backgroundSize: "300% 300%",
-          mask: `linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)`,
-          WebkitMask: `linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)`,
-          WebkitMaskComposite: "xor",
-          maskComposite: "exclude",
-          padding: "var(--border-width)",
-          ...style,
-        } as React.CSSProperties
-      }
-      className={cn(
-        "pointer-events-none absolute inset-0 size-full rounded-[inherit] will-change-[background-position] motion-safe:animate-shine",
-        className,
-      )}
-      {...props}
-    />
+    <>
+      <span
+        aria-hidden
+        className={cn("pointer-events-none absolute inset-0 block opacity-90", className)}
+        style={style}
+        {...props}
+      />
+      <style jsx>{`
+        @keyframes ${animationName} {
+          0% {
+            background-position: 0% 50%;
+          }
+          50% {
+            background-position: 100% 50%;
+          }
+          100% {
+            background-position: 0% 50%;
+          }
+        }
+      `}</style>
+    </>
   );
-}
+};

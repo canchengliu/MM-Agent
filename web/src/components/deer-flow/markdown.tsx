@@ -12,7 +12,6 @@ import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 
 import { Button } from "~/components/ui/button";
-import { rehypeSplitWordsIntoSpans } from "~/core/rehype";
 import { katexOptions } from "~/core/markdown/katex";
 import { autoFixMarkdown, normalizeMathForDisplay } from "~/core/utils/markdown";
 import { cn } from "~/lib/utils";
@@ -26,22 +25,16 @@ export function Markdown({
   children,
   style,
   enableCopy,
-  animated = false,
-  checkLinkCredibility = false,
   ...props
 }: ReactMarkdownOptions & {
   className?: string;
   enableCopy?: boolean;
   style?: React.CSSProperties;
-  animated?: boolean;
-  checkLinkCredibility?: boolean;
 }) {
   const components: ReactMarkdownOptions["components"] = useMemo(() => {
     return {
       a: ({ href, children }) => (
-        <Link href={href} checkLinkCredibility={checkLinkCredibility}>
-          {children}
-        </Link>
+        <Link href={href}>{children}</Link>
       ),
       img: ({ src, alt }) => (
         <a href={src as string} target="_blank" rel="noopener noreferrer">
@@ -49,18 +42,11 @@ export function Markdown({
         </a>
       ),
     };
-  }, [checkLinkCredibility]);
+  }, []);
 
   const rehypePlugins = useMemo<NonNullable<ReactMarkdownOptions["rehypePlugins"]>>(() => {
-    const plugins: NonNullable<ReactMarkdownOptions["rehypePlugins"]> = [[
-      rehypeKatex,
-      katexOptions,
-    ]];
-    if (animated) {
-      plugins.push(rehypeSplitWordsIntoSpans);
-    }
-    return plugins;
-  }, [animated]);
+    return [[rehypeKatex, katexOptions]];
+  }, []);
   return (
     <div className={cn(className, "prose dark:prose-invert")} style={style}>
       <ReactMarkdown
