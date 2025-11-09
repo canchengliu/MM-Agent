@@ -27,3 +27,7 @@ conf.yaml
 # coverage report
 coverage.xml
 coverage/
+
+*.log
+dev_docs/
+*.sh
