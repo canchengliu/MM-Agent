@@ -13,7 +13,7 @@ import {
   MessageSquare,
   Sparkles,
 } from "lucide-react";
-import { shallow } from "zustand/react/shallow";
+import { useShallow } from "zustand/react/shallow";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -112,11 +112,10 @@ export function VersionReviewView({
   } = useVersionDetail(nodeId, versionId);
 
   const { focusNode, inspectVersion } = useWorkspaceStore(
-    (state) => ({
+    useShallow((state) => ({
       focusNode: state.focusNode,
       inspectVersion: state.inspectVersion,
-    }),
-    shallow,
+    })),
   );
 
   const handleDependencyClick = (

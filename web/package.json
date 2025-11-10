@@ -59,6 +59,7 @@
     "cmdk": "^1.1.1",
     "dagre": "^0.8.5",
     "framer-motion": "^12.6.5",
+    "geist": "^1.5.1",
     "hast": "^1.0.0",
     "highlight.js": "^11.11.1",
     "immer": "^10.1.1",

@@ -61,10 +61,10 @@ export interface WorkspaceState {
 
   /**
    * Sets the focus to a specific node.
-   * @param nodeId The ID of the node to focus.
+   * @param nodeId The ID of the node to focus, or null to clear focus.
    * @importantly This action also resets any active historical version inspection.
    */
-  focusNode: (nodeId: number) => void;
+  focusNode: (nodeId: number | null) => void;
   /**
    * Enters or exits "Time Travel Mode" by focusing on a specific historical version.
    * @param versionId The ID of the version to inspect, or null to exit the mode.

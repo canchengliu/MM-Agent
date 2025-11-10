@@ -11,7 +11,8 @@ import {
   type Node,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useMemo } from "react";
+import { Loader2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { NodeInstanceRead, WorkflowInstanceRead } from "~/core/domain";
 import { ExecutionNode, type ExecutionNodeData } from "./ExecutionNode";
@@ -69,6 +70,8 @@ const buildEdges = (nodes: WorkflowNodeWithDeps[]): Edge[] => {
  * and dependencies with automatic Dagre layout.
  */
 export function ExecutionGraph({ workflow }: ExecutionGraphProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const { nodes, edges } = useMemo(() => {
     if (!workflow?.nodes?.length) {
       return { nodes: [], edges: [] };
@@ -89,23 +92,65 @@ export function ExecutionGraph({ workflow }: ExecutionGraphProps) {
     return getLayoutedElements(reactFlowNodes, reactFlowEdges);
   }, [workflow]);
 
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+
+    const applySize = (width: number, height: number) => {
+      setDimensions((prev) =>
+        prev.width === width && prev.height === height
+          ? prev
+          : { width, height },
+      );
+    };
+
+    if (typeof ResizeObserver === "undefined") {
+      const updateSize = () => {
+        const rect = element.getBoundingClientRect();
+        applySize(rect.width, rect.height);
+      };
+      updateSize();
+      window.addEventListener("resize", updateSize);
+      return () => window.removeEventListener("resize", updateSize);
+    }
+
+    const observer = new ResizeObserver(([entry]) => {
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      applySize(width, height);
+    });
+
+    observer.observe(element);
+    applySize(element.clientWidth, element.clientHeight);
+
+    return () => observer.disconnect();
+  }, []);
+
+  const hasSize = dimensions.width > 0 && dimensions.height > 0;
+
   return (
-    <div className="h-full w-full">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
-        minZoom={0.4}
-        maxZoom={1.5}
-        panOnScroll
-        attributionPosition="bottom-right"
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background gap={36} size={1} color="hsl(var(--border))" />
-        <Controls position="bottom-right" />
-      </ReactFlow>
+    <div ref={containerRef} className="h-full w-full">
+      {hasSize ? (
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          fitView
+          fitViewOptions={{ padding: 0.2 }}
+          minZoom={0.4}
+          maxZoom={1.5}
+          panOnScroll
+          attributionPosition="bottom-right"
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background gap={36} size={1} color="hsl(var(--border))" />
+          <Controls position="bottom-right" />
+        </ReactFlow>
+      ) : (
+        <div className="flex h-full w-full items-center justify-center">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      )}
     </div>
   );
 }

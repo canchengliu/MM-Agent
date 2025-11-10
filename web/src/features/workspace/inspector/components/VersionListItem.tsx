@@ -3,6 +3,7 @@
 
 import { Check, Rocket } from "lucide-react";
 import type { MouseEvent } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -24,10 +25,12 @@ export function VersionListItem({
   workflowId,
   isActiveVersion,
 }: VersionListItemProps) {
-  const { inspectedVersionId, inspectVersion } = useWorkspaceStore((state) => ({
-    inspectedVersionId: state.inspectedVersionId,
-    inspectVersion: state.inspectVersion,
-  }));
+  const { inspectedVersionId, inspectVersion } = useWorkspaceStore(
+    useShallow((state) => ({
+      inspectedVersionId: state.inspectedVersionId,
+      inspectVersion: state.inspectVersion,
+    })),
+  );
   const activateVersionMutation = useActivateVersion();
 
   const isInspected = version.id === inspectedVersionId;

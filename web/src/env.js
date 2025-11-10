@@ -13,6 +13,7 @@ export const env = createEnv({
     NODE_ENV: z.enum(["development", "test", "production"]),
     AMPLITUDE_API_KEY: z.string().optional(),
     GITHUB_OAUTH_TOKEN: z.string().optional(),
+    DEFAULT_TIME_ZONE: z.string().optional(),
   },
 
   /**
@@ -38,6 +39,7 @@ export const env = createEnv({
     NEXT_PUBLIC_MAX_STREAM_BUFFER_SIZE: process.env.NEXT_PUBLIC_MAX_STREAM_BUFFER_SIZE,
     AMPLITUDE_API_KEY: process.env.AMPLITUDE_API_KEY,
     GITHUB_OAUTH_TOKEN: process.env.GITHUB_OAUTH_TOKEN,
+    DEFAULT_TIME_ZONE: process.env.DEFAULT_TIME_ZONE,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

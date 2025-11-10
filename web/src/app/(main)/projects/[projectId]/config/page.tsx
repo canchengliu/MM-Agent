@@ -5,6 +5,7 @@
 
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import React, { useEffect } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -26,10 +27,11 @@ import { ProjectFilesCard } from "~/features/workspace/config/ProjectFilesCard";
 export default function ProjectConfigPage({
   params,
 }: {
-  params: { projectId: string };
+  params: Promise<{ projectId: string }>;
 }) {
   const router = useRouter();
-  const projectId = Number(params.projectId);
+  const { projectId: projectIdParam } = React.use(params);
+  const projectId = Number(projectIdParam);
   const isValidProjectId = Number.isFinite(projectId);
 
   const {
@@ -42,15 +44,23 @@ export default function ProjectConfigPage({
   });
 
   const startWorkflowMutation = useStartWorkflow();
+
+  useEffect(() => {
+    if (project?.status === "Running") {
+      router.push(`/projects/${project.id}/flow`);
+    }
+  }, [project, router]);
+
   const hasProblemDescriptionFile =
     project?.files.some((file) => file.role === "Problem Description") ?? false;
+  const isConfiguring = project?.status === "Configuring";
+  const canStartWorkflow = Boolean(isConfiguring && hasProblemDescriptionFile);
 
-  const handleStartWorkflow = async () => {
-    if (!project) {
+  const handleStartWorkflow = () => {
+    if (!project || !isConfiguring) {
       return;
     }
-    await startWorkflowMutation.mutateAsync(project.id);
-    router.push(`/projects/${project.id}/flow`);
+    startWorkflowMutation.mutate(project.id);
   };
 
   if (!isValidProjectId) {
@@ -119,30 +129,33 @@ export default function ProjectConfigPage({
               <CardTitle>Start Workflow</CardTitle>
               <CardDescription>
                 Ensure a Problem Description file is uploaded before launching
-                the workflow.
+                the workflow. Projects that are already running or completed
+                cannot be relaunched.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground">
-                The workflow becomes available once the Problem Description file
-                is present. Upload it in the Project Files section if you
-                haven&rsquo;t already.
+                {isConfiguring
+                  ? "The workflow becomes available once the Problem Description file is present. Upload it in the Project Files section if you haven’t already."
+                  : "This project has already moved past the configuration stage. Review the workflow instead of relaunching it."}
               </p>
             </CardContent>
             <CardFooter>
               <Button
                 className="w-full"
-                disabled={
-                  !hasProblemDescriptionFile || startWorkflowMutation.isPending
-                }
+                disabled={!canStartWorkflow || startWorkflowMutation.isPending}
                 onClick={handleStartWorkflow}
               >
                 {startWorkflowMutation.isPending ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : null}
-                {hasProblemDescriptionFile
-                  ? "Launch Workflow"
-                  : "Awaiting Problem Description"}
+                {isConfiguring
+                  ? hasProblemDescriptionFile
+                    ? "Launch Workflow"
+                    : "Awaiting Problem Description"
+                  : project.status === "Running"
+                    ? "Workflow In Progress"
+                    : "Workflow Completed"}
               </Button>
             </CardFooter>
           </Card>

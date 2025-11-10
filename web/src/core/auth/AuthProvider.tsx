@@ -13,6 +13,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 
 import { clearToken, getToken, setToken } from "~/core/api/client";
+import { subscribeToUnauthorized } from "~/core/auth/sessionEvents";
 import { AuthService } from "~/core/api/services/auth.service";
 import { UserService } from "~/core/api/services/user.service";
 import type { UserRead } from "~/core/domain";
@@ -72,6 +73,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void initializeAuth();
   }, [initializeAuth]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToUnauthorized(logout);
+    return unsubscribe;
+  }, [logout]);
 
   /**
    * Clears the authentication error state.

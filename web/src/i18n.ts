@@ -4,6 +4,8 @@
 import { cookies } from "next/headers";
 import { getRequestConfig } from "next-intl/server";
 
+import { env } from "~/env";
+
 // Can be imported from a shared config
 const locales: Array<string> = ["zh", "en"];
 
@@ -19,5 +21,6 @@ export default getRequestConfig(async () => {
   return {
     messages: (await import(`../messages/${locale}.json`)).default,
     locale,
+    timeZone: env.DEFAULT_TIME_ZONE ?? "UTC",
   };
 });

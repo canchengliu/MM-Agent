@@ -6,6 +6,7 @@
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { Button } from "~/components/ui/button";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -16,10 +17,7 @@ import { CanvasContainer } from "~/features/workspace/canvas/CanvasContainer";
 import { useWorkflow } from "~/features/workspace/hooks/useWorkflowData";
 import { InspectorPanel } from "~/features/workspace/inspector";
 import { NavigatorPanel } from "~/features/workspace/navigator/NavigatorPanel";
-
-interface ProjectFlowPageProps {
-  params: { projectId: string };
-}
+import { useProjectWorkspace } from "~/features/workspace/context/ProjectWorkspaceContext";
 
 function MobileNodeDetailView({
   workflowId,
@@ -66,26 +64,35 @@ function MobileNodeDetailView({
   );
 }
 
-export default function ProjectFlowPage({ params }: ProjectFlowPageProps) {
+export default function ProjectFlowPage() {
+  const { workflowId } = useProjectWorkspace();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { focusNode } = useWorkspaceStore((state) => ({
-    focusNode: state.focusNode,
-  }));
+  const { focusNode, focusedNodeId } = useWorkspaceStore(
+    useShallow((state) => ({
+      focusNode: state.focusNode,
+      focusedNodeId: state.focusedNodeId,
+    })),
+  );
 
   const nodeQueryParam = searchParams.get("node");
   const showMobileDetailView = !!nodeQueryParam;
-  const workflowId = Number(params.projectId);
-
   React.useEffect(() => {
     if (!nodeQueryParam) {
-      focusNode(null);
+      if (focusedNodeId !== null) {
+        focusNode(null);
+      }
       return;
     }
     const parsedNodeId = Number(nodeQueryParam);
-    focusNode(Number.isNaN(parsedNodeId) ? null : parsedNodeId);
-  }, [nodeQueryParam, focusNode]);
+    const nextFocusedNodeId = Number.isNaN(parsedNodeId)
+      ? null
+      : parsedNodeId;
+    if (nextFocusedNodeId !== focusedNodeId) {
+      focusNode(nextFocusedNodeId);
+    }
+  }, [nodeQueryParam, focusNode, focusedNodeId]);
 
   const {
     data: workflow,
@@ -93,16 +100,6 @@ export default function ProjectFlowPage({ params }: ProjectFlowPageProps) {
     isError,
     error,
   } = useWorkflow(workflowId, { enabled: !Number.isNaN(workflowId) });
-
-  if (Number.isNaN(workflowId)) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground">
-          Invalid workflow identifier.
-        </p>
-      </div>
-    );
-  }
 
   const handleMobileNodeSelect = (nodeId: number) => {
     const newParams = new URLSearchParams(searchParams.toString());

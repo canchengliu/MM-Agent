@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 import { env } from "~/env";
+import { emitUnauthorized } from "~/core/auth/sessionEvents";
 
-const API_BASE_URL = env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const BACKEND_API_BASE_URL = env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const BROWSER_PROXY_PATH = "/api/proxy";
 const TOKEN_STORAGE_KEY = "cognitive_cockpit_token";
 
 type ValidationErrorDetail = {
@@ -41,6 +43,23 @@ export class ApiError extends Error {
 }
 
 const isBrowser = typeof window !== "undefined";
+
+const resolveApiBaseUrl = (): string => {
+  if (!isBrowser) {
+    return BACKEND_API_BASE_URL;
+  }
+
+  try {
+    const configuredUrl = new URL(BACKEND_API_BASE_URL);
+    if (configuredUrl.origin === window.location.origin) {
+      return configuredUrl.toString();
+    }
+  } catch {
+    return BACKEND_API_BASE_URL;
+  }
+
+  return BROWSER_PROXY_PATH;
+};
 
 export const getToken = (): string | null => {
   if (!isBrowser) return null;
@@ -85,8 +104,11 @@ export const apiClient = async <T>(
   options: RequestInit = {},
 ): Promise<T> => {
   const headers = buildHeaders(options.headers, options.body);
+  const authHeader = headers.get("Authorization");
+  const isUsingBearerToken = Boolean(authHeader?.startsWith("Bearer "));
+  const apiBaseUrl = resolveApiBaseUrl();
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+  const response = await fetch(`${apiBaseUrl}${endpoint}`, {
     ...options,
     headers,
   });
@@ -94,9 +116,10 @@ export const apiClient = async <T>(
   if (!response.ok) {
     const errorBody = await parseErrorBody(response);
 
-    if (response.status === 401) {
-      console.error("401 Unauthorized. Clearing stored token.");
+    if (response.status === 401 && isUsingBearerToken) {
+      console.warn("401 Unauthorized. Clearing stored token.");
       clearToken();
+      emitUnauthorized();
     }
 
     const detailArray = isValidationErrorArray(errorBody.detail)
@@ -141,7 +164,9 @@ export const authApiClient = {
     formData.append("username", username);
     formData.append("password", password);
 
-    const response = await fetch(`${API_BASE_URL}/auth/login`, {
+    const apiBaseUrl = resolveApiBaseUrl();
+
+    const response = await fetch(`${apiBaseUrl}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: formData,
