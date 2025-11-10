@@ -1,0 +1,24 @@
+Build Error
+
+
+Error evaluating Node.js code
+
+./src/styles/globals.css
+
+Error evaluating Node.js code
+Error: Cannot apply unknown utility class: border-border-subtle
+    [at onInvalidCandidate (/Users/ann/Documents/projects/MM-Agent/web/node_modules/.pnpm/tailwindcss@4.1.4/node_modules/tailwindcss/dist/lib.js:20:348)]
+    [at me (/Users/ann/Documents/projects/MM-Agent/web/node_modules/.pnpm/tailwindcss@4.1.4/node_modules/tailwindcss/dist/lib.js:15:29596)]
+    [at De (/Users/ann/Documents/projects/MM-Agent/web/node_modules/.pnpm/tailwindcss@4.1.4/node_modules/tailwindcss/dist/lib.js:20:311)]
+    [at si (/Users/ann/Documents/projects/MM-Agent/web/node_modules/.pnpm/tailwindcss@4.1.4/node_modules/tailwindcss/dist/lib.js:36:784)]
+    [at async ui (/Users/ann/Documents/projects/MM-Agent/web/node_modules/.pnpm/tailwindcss@4.1.4/node_modules/tailwindcss/dist/lib.js:36:1079)]
+    [at async Cr (/Users/ann/Documents/projects/MM-Agent/web/node_modules/.pnpm/@tailwindcss+node@4.1.4/node_modules/@tailwindcss/node/dist/index.js:12:3305)]
+    [at async $ (/Users/ann/Documents/projects/MM-Agent/web/node_modules/.pnpm/@tailwindcss+postcss@4.1.4/node_modules/@tailwindcss/postcss/dist/index.js:10:3320)]
+    [at async Object.Once (/Users/ann/Documents/projects/MM-Agent/web/node_modules/.pnpm/@tailwindcss+postcss@4.1.4/node_modules/@tailwindcss/postcss/dist/index.js:10:3596)]
+    [at async LazyResult.runAsync (turbopack:///[project]/node_modules/.pnpm/postcss@8.5.3/node_modules/postcss/lib/lazy-result.js:293:11)]
+    [at async transform (turbopack:///[turbopack-node]/transforms/postcss.ts:70:34)]
+
+Import trace:
+  ./src/styles/globals.css [Client Component Browser]
+  ./src/app/layout.tsx [Server Component]
+1

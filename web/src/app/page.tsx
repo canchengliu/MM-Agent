@@ -4,9 +4,9 @@
 import { useTranslations } from 'next-intl';
 import { useMemo } from "react";
 
-import { SiteHeader } from "./chat/components/site-header";
 import { Jumbotron } from "./landing/components/jumbotron";
 import { Ray } from "./landing/components/ray";
+import { SiteHeader } from "./landing/components/site-header";
 import { CaseStudySection } from "./landing/sections/case-study-section";
 import { CoreFeatureSection } from "./landing/sections/core-features-section";
 import { JoinCommunitySection } from "./landing/sections/join-community-section";

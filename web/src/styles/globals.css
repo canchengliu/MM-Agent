@@ -8,6 +8,10 @@
   --font-sans:
     var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  /* Added Geist Mono font variable */
+  --font-mono:
+    var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
 
   --animate-fade-in: fade-in 1s;
   @keyframes fade-in {
@@ -141,7 +145,11 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
-  --brand: #007aff;
+  --brand: var(--primary); /* Optimized: Use primary color variable */
+  /* Semantic Colors */
+  --success: oklch(0.79 0.23 145); /* Green */
+  --warning: oklch(0.83 0.2 87); /* Amber */
+  --executing: oklch(0.6 0.118 184.704); /* Blue */
 
   --novel-highlight-default: #ffffff;
   --novel-highlight-purple: #f6f3f8;
@@ -155,39 +163,53 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --app-background: var(--background);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
+  /* Core Palette */
+  --app-background: oklch(0.106 0 0); /* #111111 - The main, solid page background */
+  --background: oklch(1 0 0 / 0.05); /* Optimized: Default surfaces are glass-like (5% white) */
+  --foreground: oklch(0.95 0 0); /* Near white for text */
+  /* Glassmorphism Panels */
+  --card: oklch(1 0 0 / 0.05); /* White 5% for glass panels */
+  --popover: oklch(1 0 0 / 0.08); /* White 8% for popovers */
+  --card-foreground: oklch(0.95 0 0);
+  --popover-foreground: oklch(0.95 0 0);
+  /* Primary Action Color: Cyan/Electric Blue */
+  --primary: oklch(0.85 0.22 198);
+  --primary-foreground: oklch(0.1 0 0); /* Dark for contrast */
+  /* Secondary & Muted */
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.6 0 0); /* Lighter muted text */
+  /* Accent Color (for hover, etc.) */
+  --accent: oklch(1 0 0 / 0.1); /* Subtle white highlight */
   --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 20%);
-  --input: oklch(1 0 0 / 25%);
-  --ring: oklch(0.556 0 0);
+  /* Borders, Inputs, Rings */
+  --border: oklch(1 0 0 / 0.15); /* White 15% */
+  --input: oklch(1 0 0 / 0.1); /* White 10% */
+  --ring: var(--primary); /* Cyan */
+  /* Brand color */
+  --brand: var(--primary);
+  /* Semantic Colors */
+  --destructive: oklch(0.704 0.191 22.216); /* Red */
+  --success: oklch(0.79 0.23 145); /* Green */
+  --warning: oklch(0.83 0.2 87); /* Amber */
+  --executing: var(--primary); /* Cyan */
+
+  /* Chart Colors (can be refined) */
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
-  --brand: rgb(17, 103, 234);
+  /* Sidebar (can be refined) */
+  --sidebar: oklch(0.12 0 0);
+  --sidebar-foreground: oklch(0.95 0 0);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: oklch(1 0 0 / 0.1);
+  --sidebar-ring: var(--ring);
 
   --novel-highlight-default: #000000;
   --novel-highlight-purple: #3f2c4b;
@@ -206,6 +228,7 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
 

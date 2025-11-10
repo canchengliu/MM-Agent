@@ -6,18 +6,18 @@ import "~/styles/globals.css";
 import { type Metadata } from "next";
 import { Geist } from "next/font/google";
 import Script from "next/script";
-import { NextIntlClientProvider } from 'next-intl';
-import { getLocale, getMessages } from 'next-intl/server';
+import { getLocale, getMessages } from "next-intl/server";
 
+import { AppProviders } from "~/components/AppProviders";
 import { ThemeProviderWrapper } from "~/components/deer-flow/theme-provider-wrapper";
 import { env } from "~/env";
 
 import { Toaster } from "../components/deer-flow/toaster";
 
 export const metadata: Metadata = {
-  title: "🦌 DeerFlow",
+  title: "Cognitive Cockpit",
   description:
-    "Deep Exploration and Efficient Research, an AI tool that combines language models with specialized tools for research tasks.",
+    "An AI-native collaborative environment for complex research and analysis.",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 
@@ -48,10 +48,10 @@ export default async function RootLayout({
         </Script>
       </head>
       <body className="bg-app">
-        <NextIntlClientProvider messages={messages}>
+        <AppProviders locale={locale} messages={messages}>
           <ThemeProviderWrapper>{children}</ThemeProviderWrapper>
           <Toaster />
-        </NextIntlClientProvider>
+        </AppProviders>
         {
           // NO USER BEHAVIOR TRACKING OR PRIVATE DATA COLLECTION BY DEFAULT
           //

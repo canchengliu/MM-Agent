@@ -2,6 +2,8 @@
   "common": {
     "cancel": "Cancel",
     "save": "Save",
+    "reset": "Reset",
+    "saveChanges": "Save changes",
     "settings": "Settings",
     "getStarted": "Get Started",
     "learnMore": "Learn More",
@@ -33,6 +35,76 @@
     "mcpConfigDescription": "DeerFlow uses the standard JSON MCP config to create a new server.",
     "pasteConfigBelow": "Paste your config below and click \"Add\" to add new servers.",
     "add": "Add",
+    "tabs": {
+      "general": "General",
+      "ai-config": "AI Configuration",
+      "about": "About"
+    },
+    "generalTab": {
+      "title": "General Settings",
+      "theme": {
+        "label": "Theme",
+        "placeholder": "Select a theme",
+        "light": "Light",
+        "dark": "Dark",
+        "description": "Choose the interface style that works best for you."
+      },
+      "language": {
+        "label": "Language",
+        "placeholder": "Select a language",
+        "en": "English",
+        "zh": "Chinese",
+        "description": "Switch the primary language used across the interface."
+      }
+    },
+    "aiConfigTab": {
+      "title": "AI Configuration",
+      "interactionCardTitle": "AI Interaction Preference",
+      "hitlProfile": {
+        "label": "Human-in-the-Loop guidance",
+        "placeholder": "Select a profile",
+        "novice": "Novice",
+        "experienced": "Experienced",
+        "expert": "Expert",
+        "description": "Controls how proactively the AI collaborates with you."
+      },
+      "thinkingDepth": {
+        "label": "Thinking depth",
+        "placeholder": "Select a depth",
+        "instant": "Instant",
+        "medium": "Medium",
+        "heavy": "Heavy",
+        "description": "Heavier thinking offers deeper answers but may take longer."
+      },
+      "byokModelCardTitle": "BYOK - Custom Large Model",
+      "llmModel": {
+        "label": "Model name",
+        "placeholder": "e.g. gpt-4o-mini",
+        "description": "Friendly name for your preferred hosted model."
+      },
+      "llmBaseUrl": {
+        "label": "Base URL",
+        "placeholder": "https://api.example.com/v1",
+        "description": "Optional override for the API base URL."
+      },
+      "llmApiKey": {
+        "label": "LLM API key",
+        "placeholder": "Enter new key or leave blank to clear"
+      },
+      "byokE2bCardTitle": "BYOK - Code Execution Environment",
+      "e2bApiKey": {
+        "label": "E2B API key",
+        "placeholder": "Enter new key or leave blank to clear"
+      },
+      "apiKeyStatus": "API key is set.",
+      "clearAndReplace": "Clear and replace"
+    },
+    "aboutTab": {
+      "title": "About DeerFlow",
+      "description": "DeerFlow blends workflow automation and human-in-the-loop controls to power deep research.",
+      "versionLabel": "App version",
+      "defaultModelLabel": "Default model"
+    },
     "general": {
       "title": "General",
       "autoAcceptPlan": "Allow automatic acceptance of plans",
@@ -81,9 +153,9 @@
   },
   "chat": {
     "page": {
-        "loading": "Loading DeerFlow...",
-        "welcomeUser": "Welcome, {username}",
-        "starOnGitHub": "Star DeerFlow on GitHub"
+      "loading": "Loading DeerFlow...",
+      "welcomeUser": "Welcome, {username}",
+      "starOnGitHub": "Star DeerFlow on GitHub"
     },
     "welcome": {
       "greeting": "👋 Hello, there!",

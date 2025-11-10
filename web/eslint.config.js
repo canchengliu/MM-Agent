@@ -10,7 +10,7 @@ const compat = new FlatCompat({
 
 export default tseslint.config(
   {
-    ignores: [".next", "src/components"],
+    ignores: [".next", "src/components", "src/legacy-deerflow-reference"],
   },
   ...compat.extends("next/core-web-vitals"),
   {

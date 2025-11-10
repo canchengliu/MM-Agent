@@ -16,10 +16,12 @@ export const Link = ({
 }) => {
   const toolCalls = useToolCalls();
   const responding = useStore((state) => state.responding);
+  const hasToolCallResults =
+    Array.isArray(toolCalls) && toolCalls.length > 0;
 
   const credibleLinks = useMemo(() => {
     const links = new Set<string>();
-    if (!checkLinkCredibility) return links;
+    if (!checkLinkCredibility || !hasToolCallResults) return links;
 
     (toolCalls || []).forEach((call) => {
       if (call && call.name === "web_search" && call.result) {
@@ -40,13 +42,23 @@ export const Link = ({
       }
     });
     return links;
-  }, [toolCalls]);
+  }, [toolCalls, checkLinkCredibility, hasToolCallResults]);
 
   const isCredible = useMemo(() => {
-    return checkLinkCredibility && href && !responding
-      ? credibleLinks.has(href)
-      : true;
-  }, [credibleLinks, href, responding, checkLinkCredibility]);
+    if (!checkLinkCredibility || !href || !hasToolCallResults) {
+      return true;
+    }
+    if (responding) {
+      return true;
+    }
+    return credibleLinks.has(href);
+  }, [
+    checkLinkCredibility,
+    credibleLinks,
+    hasToolCallResults,
+    href,
+    responding,
+  ]);
 
   const t = useTranslations("common");
   return (

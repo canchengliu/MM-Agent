@@ -3,7 +3,7 @@
 
 import { create } from "zustand";
 
-import type { MCPServerMetadata, SimpleMCPServerMetadata } from "../mcp";
+import type { MCPServerMetadata } from "../mcp";
 
 const SETTINGS_KEY = "deerflow.settings";
 
@@ -34,7 +34,12 @@ export type SettingsState = {
     maxPlanIterations: number;
     maxStepNum: number;
     maxSearchResults: number;
-    reportStyle: "academic" | "popular_science" | "news" | "social_media" | "strategic_investment";
+    reportStyle:
+      | "academic"
+      | "popular_science"
+      | "news"
+      | "social_media"
+      | "strategic_investment";
   };
   mcp: {
     servers: MCPServerMetadata[];
@@ -59,18 +64,24 @@ export const loadSettings = () => {
   }
   const json = localStorage.getItem(SETTINGS_KEY);
   if (json) {
-    const settings = JSON.parse(json);
-    for (const key in DEFAULT_SETTINGS.general) {
-      if (!(key in settings.general)) {
-        settings.general[key as keyof SettingsState["general"]] =
-          DEFAULT_SETTINGS.general[key as keyof SettingsState["general"]];
-      }
-    }
-
     try {
-      useSettingsStore.setState(settings);
+      const settings = JSON.parse(json);
+      const mergedSettings = {
+        ...DEFAULT_SETTINGS,
+        ...settings,
+        general: {
+          ...DEFAULT_SETTINGS.general,
+          ...(settings.general ?? {}),
+        },
+        mcp: {
+          ...DEFAULT_SETTINGS.mcp,
+          ...(settings.mcp ?? {}),
+        },
+      } satisfies SettingsState;
+      useSettingsStore.setState(mergedSettings);
     } catch (error) {
-      console.error(error);
+      console.error("Failed to load settings from localStorage:", error);
+      useSettingsStore.setState(DEFAULT_SETTINGS);
     }
   }
 };
@@ -81,60 +92,13 @@ export const saveSettings = () => {
   localStorage.setItem(SETTINGS_KEY, json);
 };
 
-export const getChatStreamSettings = () => {
-  let mcpSettings:
-    | {
-        servers: Record<
-          string,
-          MCPServerMetadata & {
-            enabled_tools: string[];
-            add_to_agents: string[];
-          }
-        >;
-      }
-    | undefined = undefined;
-  const { mcp, general } = useSettingsStore.getState();
-  const mcpServers = mcp.servers.filter((server) => server.enabled);
-  if (mcpServers.length > 0) {
-    mcpSettings = {
-      servers: mcpServers.reduce((acc, cur) => {
-        const { transport, env, headers } = cur;
-        let server: SimpleMCPServerMetadata;
-        if (transport === "stdio") {
-          server = {
-            name: cur.name,
-            transport,
-            env,
-            command: cur.command,
-            args: cur.args,
-          };
-        } else {
-          server = {
-            name: cur.name,
-            transport,
-            headers,
-            url: cur.url,
-          };
-        }
-        return {
-          ...acc,
-          [cur.name]: {
-            ...server,
-            enabled_tools: cur.tools.map((tool) => tool.name),
-            add_to_agents: ["researcher"],
-          },
-        };
-      }, {}),
-    };
-  }
-  return {
-    ...general,
-    mcpSettings,
-  };
-};
-
 export function setReportStyle(
-  value: "academic" | "popular_science" | "news" | "social_media" | "strategic_investment",
+  value:
+    | "academic"
+    | "popular_science"
+    | "news"
+    | "social_media"
+    | "strategic_investment",
 ) {
   useSettingsStore.setState((state) => ({
     general: {
@@ -174,4 +138,5 @@ export function setEnableClarification(value: boolean) {
   }));
   saveSettings();
 }
+
 loadSettings();

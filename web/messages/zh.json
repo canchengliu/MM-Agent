@@ -2,6 +2,8 @@
   "common": {
     "cancel": "取消",
     "save": "保存",
+    "reset": "重置",
+    "saveChanges": "保存更改",
     "settings": "设置",
     "getStarted": "开始使用",
     "learnMore": "了解更多",
@@ -33,6 +35,76 @@
     "mcpConfigDescription": "DeerFlow 使用标准 JSON MCP 配置来创建新服务器。",
     "pasteConfigBelow": "将您的配置粘贴到下面，然后点击\"添加\"来添加新服务器。",
     "add": "添加",
+    "tabs": {
+      "general": "通用",
+      "ai-config": "AI 配置",
+      "about": "关于"
+    },
+    "generalTab": {
+      "title": "通用设置",
+      "theme": {
+        "label": "主题",
+        "placeholder": "选择主题",
+        "light": "浅色",
+        "dark": "深色",
+        "description": "选择适合您的界面主题。"
+      },
+      "language": {
+        "label": "界面语言",
+        "placeholder": "选择语言",
+        "en": "英语",
+        "zh": "中文",
+        "description": "切换界面使用的主要语言。"
+      }
+    },
+    "aiConfigTab": {
+      "title": "AI 配置",
+      "interactionCardTitle": "AI 交互偏好",
+      "hitlProfile": {
+        "label": "人机协作模式",
+        "placeholder": "选择模式",
+        "novice": "新手",
+        "experienced": "进阶",
+        "expert": "专家",
+        "description": "控制 AI 与您的协作方式。"
+      },
+      "thinkingDepth": {
+        "label": "思考深度",
+        "placeholder": "选择深度",
+        "instant": "极速",
+        "medium": "标准",
+        "heavy": "深度",
+        "description": "更高的思考深度会提供更深入的答案，但需要更长时间。"
+      },
+      "byokModelCardTitle": "BYOK - 自定义大模型",
+      "llmModel": {
+        "label": "模型名称",
+        "placeholder": "例如 gpt-4o-mini",
+        "description": "用于标识您偏好的托管模型。"
+      },
+      "llmBaseUrl": {
+        "label": "基础 URL",
+        "placeholder": "https://api.example.com/v1",
+        "description": "可选项，用于覆盖默认的 API 基础地址。"
+      },
+      "llmApiKey": {
+        "label": "LLM API Key",
+        "placeholder": "输入新密钥或留空以清除"
+      },
+      "byokE2bCardTitle": "BYOK - 代码执行环境",
+      "e2bApiKey": {
+        "label": "E2B API Key",
+        "placeholder": "输入新密钥或留空以清除"
+      },
+      "apiKeyStatus": "已设置 API 密钥。",
+      "clearAndReplace": "清除并替换"
+    },
+    "aboutTab": {
+      "title": "关于 DeerFlow",
+      "description": "DeerFlow 结合工作流自动化与人机协作，为深度研究提供支持。",
+      "versionLabel": "应用版本",
+      "defaultModelLabel": "默认模型"
+    },
     "general": {
       "title": "通用",
       "autoAcceptPlan": "允许自动接受计划",
