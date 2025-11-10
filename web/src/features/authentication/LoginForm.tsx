@@ -5,7 +5,6 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
-import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -28,6 +27,7 @@ import {
 } from "~/components/ui/form";
 import { Input } from "~/components/ui/input";
 import { useAuth } from "~/core/auth/hooks";
+import { Link } from "~/navigation";
 
 const loginSchema = z.object({
   email: z.string().email({ message: "Please enter a valid email address." }),

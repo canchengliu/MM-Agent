@@ -5,22 +5,25 @@ import { cookies } from "next/headers";
 import { getRequestConfig } from "next-intl/server";
 
 import { env } from "~/env";
+import { defaultLocale, locales, type Locale } from "./i18n-config";
 
-// Can be imported from a shared config
-const locales: Array<string> = ["zh", "en"];
-
-export default getRequestConfig(async () => {
+export default getRequestConfig(async ({ locale: requestLocale }) => {
   // Get locale from cookie
   const cookieStore = await cookies();
-  const cookieLocale = cookieStore.get("NEXT_LOCALE")?.value;
+  const cookieLocale = cookieStore.get("NEXT_LOCALE")?.value as Locale | undefined;
 
-  // Validate that the incoming `locale` parameter is valid
-  const locale =
-    cookieLocale && locales.includes(cookieLocale) ? cookieLocale : "en";
+  const normalizedLocale =
+    (requestLocale && locales.includes(requestLocale as Locale)
+      ? (requestLocale as Locale)
+      : undefined) ??
+    cookieLocale ??
+    defaultLocale;
 
   return {
-    messages: (await import(`../messages/${locale}.json`)).default,
-    locale,
+    messages: (await import(`../messages/${normalizedLocale}.json`)).default,
+    locale: normalizedLocale,
     timeZone: env.DEFAULT_TIME_ZONE ?? "UTC",
   };
 });
+
+export { locales, defaultLocale };

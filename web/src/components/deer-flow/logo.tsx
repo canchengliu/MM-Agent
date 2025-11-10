@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
-import Link from "next/link";
+import { Link } from "~/navigation";
 
 export function Logo() {
   return (

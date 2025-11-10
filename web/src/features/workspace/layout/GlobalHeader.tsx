@@ -1,8 +1,8 @@
 "use client";
 
 import { Download } from "lucide-react";
-import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -12,10 +12,12 @@ import {
   useExportProject,
   useProjectDetail,
 } from "~/features/dashboard/hooks/useProjects";
+import { Link } from "~/navigation";
 
 type WorkspaceRouteParams = { projectId?: string | string[] };
 
 export function GlobalHeader() {
+  const t = useTranslations("layout");
   const params = useParams<WorkspaceRouteParams>();
   const { user } = useAuth();
 
@@ -49,7 +51,7 @@ export function GlobalHeader() {
     <header className="flex h-12 w-full shrink-0 items-center border-b bg-background px-4">
       <div className="flex flex-1 items-center gap-4 overflow-hidden">
         <Link href="/dashboard" className="font-semibold text-foreground">
-          Cognitive Cockpit
+          {t("appTitle")}
         </Link>
         {isValidProjectId && (
           <>
@@ -76,12 +78,12 @@ export function GlobalHeader() {
             }
             title={
               project.status === "Configuring"
-                ? "Export is available after the workflow starts."
-                : "Export project artifacts"
+                ? t("exportUnavailableHint")
+                : t("exportAvailableHint")
             }
           >
             <Download className="mr-2 h-4 w-4" />
-            Export Project
+            {t("exportButton")}
           </Button>
         )}
 

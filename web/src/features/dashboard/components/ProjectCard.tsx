@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 import { CalendarDays, ChevronRight } from "lucide-react";
-import Link from "next/link";
 
 import { Badge } from "~/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import type { ProjectStatus, ProjectSummaryRead } from "~/core/domain";
+import { Link } from "~/navigation";
 
 const statusCopy: Record<
   ProjectStatus,

@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
-import { create, type StoreApi, type UseBoundStore } from "zustand";
+import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 /**
@@ -151,23 +151,3 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     },
   ),
 );
-
-type LegacyStoreState = WorkspaceState & Record<string, unknown>;
-
-/**
- * @deprecated Temporary alias maintained for legacy components.
- * Prefer using `useWorkspaceStore` directly.
- */
-export const useStore =
-  useWorkspaceStore as unknown as UseBoundStore<StoreApi<LegacyStoreState>>;
-
-export type ToolCallSnapshot = {
-  name?: string | null;
-  result?: string | null;
-};
-
-/**
- * @deprecated Placeholder hook retained for the legacy Markdown Link component.
- * Replace with data sourced from React Query once tool calls move to server state.
- */
-export const useToolCalls = (): ToolCallSnapshot[] | undefined => undefined;

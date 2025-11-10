@@ -1,8 +1,6 @@
 "use client";
 
 import { LogOut, Settings } from "lucide-react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -16,6 +14,7 @@ import {
 } from "~/components/ui/dropdown-menu";
 import { useAuth } from "~/core/auth/hooks";
 import type { UserRead } from "~/core/domain";
+import { Link, useRouter } from "~/navigation";
 
 interface UserNavProps {
   user: UserRead;

@@ -4,7 +4,6 @@
 "use client";
 
 import { useLocale } from "next-intl";
-import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -14,6 +13,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
+import { usePathname, useRouter } from "~/navigation";
 
 type LanguageOption = {
   code: string;
@@ -29,6 +29,7 @@ const languages: Array<LanguageOption> = [
 export function LanguageSwitcher() {
   const locale = useLocale();
   const router = useRouter();
+  const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
 
   const currentLanguage =
@@ -37,11 +38,7 @@ export function LanguageSwitcher() {
 
   const handleLanguageChange = (newLocale: string) => {
     startTransition(() => {
-      console.log(`updateing locale to ${newLocale}`)
-      // Set locale in cookie
-      document.cookie = `NEXT_LOCALE=${newLocale}; path=/; max-age=31536000; SameSite=lax`;
-      // Reload the page to apply the new locale
-      window.location.reload();
+      router.replace(pathname, { locale: newLocale });
     });
   };
 

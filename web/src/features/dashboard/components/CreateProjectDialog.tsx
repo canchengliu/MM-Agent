@@ -5,7 +5,6 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -31,6 +30,7 @@ import {
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
 import { useCreateProject } from "~/features/dashboard/hooks/useProjects";
+import { useRouter } from "~/navigation";
 
 const formSchema = z.object({
   name: z.string().min(1, { message: "Project name is required." }).max(120),

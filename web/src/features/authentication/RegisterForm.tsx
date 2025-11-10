@@ -5,8 +5,6 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -31,6 +29,7 @@ import {
 import { Input } from "~/components/ui/input";
 import { ApiError } from "~/core/api/client";
 import { AuthService } from "~/core/api/services/auth.service";
+import { Link, useRouter } from "~/navigation";
 
 // Schema for registration form validation based on API requirements.
 const registerSchema = z

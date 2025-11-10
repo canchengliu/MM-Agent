@@ -24,8 +24,8 @@ export const useUpdateSettings = () => {
   return useMutation({
     mutationFn: (settings: Partial<UserSettingsUpdate>) =>
       UserService.updateSettings(settings),
-    onSuccess: (updatedSettings) => {
-      queryClient.setQueryData(QueryKeys.userSettings(), updatedSettings);
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: QueryKeys.userSettings() });
       toast.success("Settings have been saved successfully.");
     },
     onError: (error) => {
