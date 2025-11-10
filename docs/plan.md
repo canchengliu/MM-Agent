@@ -1,150 +1,90 @@
-这是一个经典的 React 无限循环渲染（infinite re-render loop）错误，导致 React 抛出 “Maximum update depth exceeded” 异常。
+您好，感谢您提供新的错误信息。这个错误堆栈非常有价值，它帮助我们锁定了问题的真正根源。
 
-### 错误原因深入分析
+您遇到的 `Maximum update depth exceeded` 错误，结合新的堆栈跟踪，表明问题**不是**由 `ScrollContainer` 或 `useStickToBottom` 引起的，而是由 `ProjectFlowPage` 内部两个相互冲突的 `useEffect` 钩子（Hooks）引起的无限循环。
 
-这个问题的核心在于 **“在渲染过程中触发了状态更新”**，而这个状态更新又导致了组件的重新渲染，如此循环往复。
-
-堆栈跟踪（Stack Trace）为我们提供了关键线索：
-
-1.  **错误起点**: `dispatchSetState` (一个 `setState` 调用)。
-2.  **触发位置**: `ScrollArea.useComposedRefs[composedRefs] (scroll-area.tsx:87:66)`。
-3.  **调用路径**: `setRef (compose-refs.tsx:11:12)`。
-
-这表明，一个 **ref 回调 (ref callback)** 正在同步调用 `setState`。在 React 中，ref 回调（即 `ref={node => ...}`）在组件挂载和卸载（或 ref 变更）时执行。在这些阶段同步调用 `setState` 极易引发无限循环。
+`ScrollArea` 组件（及其 `useComposedRefs` 内部逻辑）只是这个无限循环的**受害者**。当 React 陷入无限渲染循环时，它会不断地创建和销毁组件，这导致 `ref` 回调被疯狂触发，最终在 `ScrollArea` 内部崩溃。
 
 -----
 
-### 问题定位：`scroll-container.tsx`
+### 问题的真正根源
 
-尽管堆栈跟踪指向了 `scroll-area.tsx`，但这个 UI 组件（来自 shadcn/Radix）本身通常是稳定的。问题更有可能出在 *使用* 它的地方，即 `components/deer-flow/scroll-container.tsx`。
+在 `src/app/[locale]/(main)/projects/[projectId]/flow/page.tsx` 文件中，存在两个 `useEffect` 钩子，它们在移动设备视图下会“互相争斗”，导致无限循环。
 
-我们来分析 `scroll-container.tsx` 的代码：
+**冲突的钩子 A（第 127 行）**：
+这个 `useEffect` 负责将 URL 中的 `node` 查询参数（`nodeQueryParam`）同步到 `focusedNodeId` 状态。
 
-```tsx
-// components/deer-flow/scroll-container.tsx
+  * **它的逻辑是**：“如果 URL 中*没有* `node` 参数（`!nodeQueryParam`），并且 `focusedNodeId` *不是* `null`，就*强制*调用 `focusNode(null)`。”
 
-export function ScrollContainer({
-  // ...
-  autoScrollToBottom = false,
-  ref,
-}: ScrollContainerProps) {
-  
-  // 1. 关键：调用 useStickToBottom 钩子
-  const {
-    scrollRef: autoScrollViewportRef, // 这是一个 ref
-    contentRef: autoScrollContentRef,
-    scrollToBottom,
-  } = useStickToBottom({ initial: "instant" });
+**冲突的钩子 B（第 142 行）**：
+这个 `useEffect` 负责在没有节点被聚焦时，*自动聚焦*到重要节点（如“等待中”或“执行中”的节点）。
 
-  const manualViewportRef = useRef<HTMLDivElement>(null);
+  * **它的逻辑是**：“如果 `focusedNodeId` 是 `null`，就去寻找一个重要节点并调用 `focusNode(node.id)`。”
 
-  // 2. 根据 props 选择要激活的 ref
-  const activeViewportRef = autoScrollToBottom
-    ? autoScrollViewportRef
-    : manualViewportRef;
+**无限循环（仅在移动视图）**：
 
-  // ... (useImperativeHandle) ...
-
-  return (
-    <div ...>
-      {/* ... */}
-      {/* 3. 将 ref 传递给 ScrollArea */}
-      <ScrollArea
-        viewportRef={activeViewportRef} // autoScrollViewportRef 被传到这里
-        className="h-full w-full"
-      >
-        <div className="h-fit w-full" ref={activeContentRef}>
-          {children}
-        </div>
-      </ScrollArea>
-    </div>
-  );
-}
-```
-
-### 无限循环的产生过程
-
-问题几乎可以肯定是出在 `useStickToBottom` 这个自定义钩子上（该钩子的代码未在上下文中提供）。
-
-**根本原因：`useStickToBottom` 钩子返回了不稳定的 Ref 回调函数。**
-
-一个（有缺陷的）`useStickToBottom` 钩子可能在内部是这样实现的：
-
-```javascript
-// use-stick-to-bottom (假设的错误实现)
-function useStickToBottom() {
-  const [node, setNode] = useState(null); // <-- 内部有状态
-
-  // 错误：这个 ref 回调函数没有被 useCallback 包裹
-  const scrollRef = (instance) => {
-    setNode(instance); // <-- 在 ref 回调中调用了 setState！
-  };
-  
-  // ... (其他逻辑)
-
-  return { scrollRef, ... };
-}
-```
-
-当 `ScrollContainer` 使用了这个有缺陷的钩子时，无限循环就产生了：
-
-1.  **Render (第1次):**
-      * `ScrollContainer` 渲染。
-      * `useStickToBottom` 被调用，它创建了一个 *新* 的 `scrollRef` 函数 (我们称之为 `ref_A`)。
-      * `ref_A` 作为 `activeViewportRef` 被传递给 `<ScrollArea viewportRef={ref_A}>`。
-2.  **Commit (第1次):**
-      * React 挂载 `ScrollArea` 的 `Viewport`。
-      * React 调用 ref 回调：`ref_A(domNode)`。
-      * `ref_A` 内部的 `setNode(domNode)` 被触发，这更新了 `useStickToBottom` 钩子内部的状态。
-3.  **Render (第2次):**
-      * `setNode` 触发了 `ScrollContainer` 的重新渲染。
-      * `useStickToBottom` *再次* 被调用，它创建了 *另一个新* 的 `scrollRef` 函数 (我们称之为 `ref_B`)。
-4.  **Commit (第2次):**
-      * React 发现 `ScrollArea` 的 `viewportRef` 属性从 `ref_A` 变成了 `ref_B`。
-      * React 必须先卸载旧的 ref，再挂载新的 ref。
-      * React 调用 `ref_A(null)` (卸载)。这触发了 `setNode(null)`。
-      * React 调用 `ref_B(domNode)` (挂载)。这触发了 `setNode(domNode)`。
-5.  **Render (第3次, 第4次, ...):**
-      * 上一步中的 *两次* `setNode` 调用，又触发了 `ScrollContainer` 的重新渲染。
-      * 这个过程（Render -\> 创建新 ref -\> Commit -\> `setState` -\> Render）无限重复，直到 React 崩溃并抛出 `Maximum update depth exceeded` 错误。
-
------
-
-### 关于堆栈跟踪的困惑
-
-> `at ScrollArea.useComposedRefs[composedRefs] (scroll-area.tsx:87:66)`
-
-你提供的 `components/ui/scroll-area.tsx` 文件只有 63 行，并且没有 `useComposedRefs`。
-
-这是因为堆栈跟踪指向的不是你的 `scroll-area.tsx` 封装代码，而是它内部使用的 **Radix UI 基元 (`ScrollAreaPrimitive`)** 的代码（或者它依赖的 `compose-refs` 工具）。
-
-`ScrollArea` 组件内部需要将你传入的 `viewportRef` 和它自己的内部 ref 合并（Compose）起来。当它检测到你传入的 `viewportRef` 在每次渲染时都是一个新函数时，它会不断地执行“卸载旧 ref / 挂载新 ref”的操作，从而触发了你 `useStickToBottom` 钩子中（有缺陷的）`setState`，导致了循环。
+1.  页面加载（移动视图，无 `node` 参数）。
+2.  `钩子 B` 运行。`focusedNodeId` 为 `null`。它找到了一个“等待中”的节点（例如 ID 123），并调用 `focusNode(123)`。
+3.  React 状态更新，组件重新渲染。`focusedNodeId` 现在是 `123`。
+4.  `钩子 A` 运行。`nodeQueryParam` 仍然是 `null`。
+5.  `钩子 A` 发现 `focusedNodeId` 是 `123`（不是 `null`），于是它*强制*调用 `focusNode(null)` 来“纠正”状态。
+6.  React 状态更新，组件重新渲染。`focusedNodeId` 现在是 `null`。
+7.  `钩子 B` 运行。`focusedNodeId` 为 `null`。它找到了“等待中”的节点（ID 123），并调用 `focusNode(123)`。
+8.  **循环回到第 3 步**。
 
 -----
 
 ### 解决方案
 
-**必须修复 `use-stick-to-bottom` 钩子，使其返回稳定的 (memoized) ref 回调。**
+要解决这个问题，我们需要修改这两个 `useEffect` 钩子，打破这个循环。最简单的方法是**阻止“自动聚焦”（钩子 B）在移动视图上运行**，让 URL（`nodeQueryParam`）成为移动视图上唯一的焦点来源。
 
-如果这个钩子是你的自定义代码，你需要使用 `React.useCallback` 来包裹返回的 ref：
+请打开 `src/app/[locale]/(main)/projects/[projectId]/flow/page.tsx` 文件并进行以下修改：
 
-```javascript
-// use-stick-to-bottom (正确的实现)
-import { useState, useCallback } from 'react';
+**1. 导入 `useIsMobile` 钩子：**
 
-function useStickToBottom() {
-  const [node, setNode] = useState(null);
+在文件顶部的 `import` 语句中，添加 `useIsMobile`：
 
-  // 正确：使用 useCallback 并传入空依赖数组 []
-  // 这能确保 scrollRef 在组件的整个生命周期中是同一个函数实例。
-  const scrollRef = useCallback((instance) => {
-    setNode(instance);
-  }, []); // <-- 空依赖数组是关键
+```tsx
+// src/app/[locale]/(main)/projects/[projectId]/flow/page.tsx
 
-  // ... (其他逻辑，例如返回的 scrollToBottom 也应该被 useCallback 包裹)
-
-  return { scrollRef, ... };
-}
+// ... 其他 import ...
+import { useIsMobile } from "~/hooks/use-mobile";
+// ... 其他 import ...
 ```
 
-通过这个修复，`ScrollContainer` 在后续的渲染中会收到 *完全相同* 的 `scrollRef` 函数实例，React 不会再触发 ref 的卸载和重挂载，无限循环就被打破了。
+**2. 在组件内部调用 `useIsMobile`：**
+
+在 `ProjectFlowPage` 函数的顶部，添加 `isMobile` 状态：
+
+```tsx
+// src/app/[locale]/(main)/projects/[projectId]/flow/page.tsx
+
+export default function ProjectFlowPage() {
+  const isMobile = useIsMobile(); // <--- 添加这一行
+  const { workflowId } = useProjectWorkspace();
+  const router = useRouter();
+  // ... (剩余的代码)
+```
+
+**3. 修改“自动聚焦”的 `useEffect` (钩子 B)：**
+
+找到位于大约**第 142 行**的 `useEffect`，在它内部添加一个检查，如果 `isMobile` 为 `true`，则直接 `return`。
+
+```tsx
+// src/app/[locale]/(main)/projects/[projectId]/flow/page.tsx
+
+  // ...
+  // (这是自动聚焦的 useEffect)
+  React.useEffect(() => {
+    if (isMobile) { // <--- 添加这一行
+      return; // 在移动端，让 URL query param 成为唯一的焦点来源
+    } // <--- 添加这一行
+
+    if (focusedNodeId !== null) {
+      return;
+    }
+  // ... (useEffect 的剩余部分保持不变)
+  // ...
+
+  // 将 isMobile 添加到依赖项数组中
+  }, [workflow, focusedNodeId, focusNode, isMobile]); // <--- 在这里添加 isMobile
+```

@@ -19,6 +19,7 @@ import { CanvasContainer } from "~/features/workspace/canvas/CanvasContainer";
 import { useWorkflow } from "~/features/workspace/hooks/useWorkflowData";
 import { InspectorPanel } from "~/features/workspace/inspector";
 import { NavigatorPanel } from "~/features/workspace/navigator/NavigatorPanel";
+import { useIsMobile } from "~/hooks/use-mobile";
 
 function MobileNodeDetailView({
   workflowId,
@@ -67,6 +68,7 @@ function MobileNodeDetailView({
 
 export default function ProjectFlowPage() {
   const { workflowId } = useProjectWorkspace();
+  const isMobile = useIsMobile();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -103,6 +105,11 @@ export default function ProjectFlowPage() {
   } = useWorkflow(workflowId, { enabled: !Number.isNaN(workflowId) });
 
   React.useEffect(() => {
+    if (isMobile) {
+      // Let URL params drive focus on mobile to avoid the effect loop.
+      return;
+    }
+
     if (focusedNodeId !== null) {
       return;
     }
@@ -128,7 +135,7 @@ export default function ProjectFlowPage() {
     if (executingNode) {
       focusNode(executingNode.id);
     }
-  }, [workflow, focusedNodeId, focusNode]);
+  }, [workflow, focusedNodeId, focusNode, isMobile]);
 
   const handleMobileNodeSelect = (nodeId: number) => {
     const newParams = new URLSearchParams(searchParams.toString());
