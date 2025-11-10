@@ -18,10 +18,14 @@ const JITTER_FACTOR = 0.2;
 
 const getWsUrl = (workflowId: number, token: string): string => {
   const apiUrl = env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-  const url = new URL(apiUrl);
-  const protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = new URL(apiUrl);
+  wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
 
-  return `${protocol}//${url.host}/ws/${workflowId}?token=${token}`;
+  const newPath = `${wsUrl.pathname.replace(/\/$/, "")}/workflows/${workflowId}/ws`;
+  wsUrl.pathname = newPath;
+  wsUrl.searchParams.set("token", token);
+
+  return wsUrl.toString();
 };
 
 class ConnectionManager {

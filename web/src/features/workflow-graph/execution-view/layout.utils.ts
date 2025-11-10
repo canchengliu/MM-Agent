@@ -4,9 +4,6 @@
 import type { Edge, Node } from "@xyflow/react";
 import dagre from "dagre";
 
-const dagreGraph = new dagre.graphlib.Graph();
-dagreGraph.setDefaultEdgeLabel(() => ({}));
-
 const NODE_WIDTH = 260;
 const NODE_HEIGHT = 140;
 
@@ -22,6 +19,9 @@ export function getLayoutedElements<T extends Node>(
   edges: Edge[],
   options: LayoutOptions = {},
 ) {
+  const dagreGraph = new dagre.graphlib.Graph();
+  dagreGraph.setDefaultEdgeLabel(() => ({}));
+
   dagreGraph.setGraph({
     rankdir: options.rankdir ?? "LR",
     nodesep: 80,

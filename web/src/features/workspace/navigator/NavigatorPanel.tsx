@@ -80,7 +80,7 @@ export function NavigatorPanel({ workflowId }: NavigatorPanelProps) {
           exit="hidden"
         >
           {sortedNodes.map((node) => (
-            <motion.div key={node.id} layout variants={itemVariants}>
+            <motion.div key={node.id} variants={itemVariants}>
               <NodeListItem node={node} workflowId={workflowId} />
             </motion.div>
           ))}
@@ -89,4 +89,3 @@ export function NavigatorPanel({ workflowId }: NavigatorPanelProps) {
     </ScrollArea>
   );
 }
-

@@ -2,187 +2,141 @@
 // SPDX-License-Identifier: MIT
 
 import { env } from "~/env";
-import { emitUnauthorized } from "~/core/auth/sessionEvents";
+import { publishUnauthorized } from "~/core/auth/sessionEvents";
 
-const BACKEND_API_BASE_URL = env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const BROWSER_PROXY_PATH = "/api/proxy";
-const TOKEN_STORAGE_KEY = "cognitive_cockpit_token";
-
-type ValidationErrorDetail = {
-  loc?: Array<string | number>;
-  msg?: string;
-  type?: string;
-  [key: string]: unknown;
-};
-
-type ErrorResponseBody = {
-  detail?: string | ValidationErrorDetail[];
-  message?: string;
-  error_code?: string;
-  [key: string]: unknown;
-};
-
-const isValidationErrorArray = (
-  detail: ErrorResponseBody["detail"],
-): detail is ValidationErrorDetail[] => Array.isArray(detail);
+const TOKEN_KEY = "auth-token";
 
 /**
- * Standardized error type for API responses.
- * Carries HTTP status, server-provided errorCode, and optional validation details.
+ * Stores the authentication token in localStorage.
+ * @param token The JWT token received from the server.
  */
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    public errorCode?: string,
-    message?: string,
-    public detail?: ValidationErrorDetail[],
-  ) {
-    super(message ?? "An API error occurred");
-    this.name = "ApiError";
+export function setToken(token: string): void {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(TOKEN_KEY, token);
   }
 }
 
-const isBrowser = typeof window !== "undefined";
-
-const resolveApiBaseUrl = (): string => {
-  if (!isBrowser) {
-    return BACKEND_API_BASE_URL;
+/**
+ * Retrieves the authentication token from localStorage.
+ * @returns The stored token or null if not found.
+ */
+export function getToken(): string | null {
+  if (typeof window !== "undefined") {
+    return window.localStorage.getItem(TOKEN_KEY);
   }
+  return null;
+}
 
-  try {
-    const configuredUrl = new URL(BACKEND_API_BASE_URL);
-    if (configuredUrl.origin === window.location.origin) {
-      return configuredUrl.toString();
-    }
-  } catch {
-    return BACKEND_API_BASE_URL;
+/**
+ * Removes the authentication token from localStorage.
+ */
+export function clearToken(): void {
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(TOKEN_KEY);
   }
+}
 
-  return BROWSER_PROXY_PATH;
-};
+// Custom Error class for API errors
+export class ApiError extends Error {
+  status: number;
+  details: unknown;
 
-export const getToken = (): string | null => {
-  if (!isBrowser) return null;
-  return window.localStorage.getItem(TOKEN_STORAGE_KEY);
-};
-
-export const setToken = (token: string): void => {
-  if (!isBrowser) return;
-  window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
-};
-
-export const clearToken = (): void => {
-  if (!isBrowser) return;
-  window.localStorage.removeItem(TOKEN_STORAGE_KEY);
-};
-
-const buildHeaders = (initHeaders: HeadersInit | undefined, body: RequestInit["body"]) => {
-  const headers = new Headers(initHeaders ?? {});
-
-  if (!headers.has("Content-Type") && !(body instanceof FormData)) {
-    headers.set("Content-Type", "application/json");
+  constructor(message: string, status: number, details: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.details = details;
   }
+}
 
+/**
+ * A generic API client for making authenticated requests.
+ * It automatically adds the Authorization header to every request.
+ * @param endpoint The API endpoint to call (e.g., "/users/me").
+ * @param options The standard fetch RequestInit options.
+ * @returns A promise that resolves with the JSON response.
+ */
+export async function apiClient<T>(
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const apiUrl = env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  const url = `${apiUrl}${endpoint}`;
   const token = getToken();
+
+  // Create headers and add the Authorization token if it exists.
+  const headers = new Headers(options.headers);
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  return headers;
-};
-
-const parseErrorBody = async (response: Response): Promise<ErrorResponseBody> => {
-  try {
-    return await response.json();
-  } catch {
-    return { detail: "An unknown error occurred" };
+  // Set default Content-Type, unless it's a FormData upload
+  if (options.body && !(options.body instanceof FormData)) {
+    if (!headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
   }
-};
 
-export const apiClient = async <T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> => {
-  const headers = buildHeaders(options.headers, options.body);
-  const authHeader = headers.get("Authorization");
-  const isUsingBearerToken = Boolean(authHeader?.startsWith("Bearer "));
-  const apiBaseUrl = resolveApiBaseUrl();
+  const response = await fetch(url, { ...options, headers });
 
-  const response = await fetch(`${apiBaseUrl}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  // If the server responds with 401, publish an event to trigger logout.
+  if (response.status === 401) {
+    publishUnauthorized();
+    const errorBody = await response.json().catch(() => ({ detail: "Unauthorized" }));
+    throw new ApiError(errorBody.detail || "Authentication failed", 401, errorBody);
+  }
 
   if (!response.ok) {
-    const errorBody = await parseErrorBody(response);
-
-    if (response.status === 401 && isUsingBearerToken) {
-      console.warn("401 Unauthorized. Clearing stored token.");
-      clearToken();
-      emitUnauthorized();
-    }
-
-    const detailArray = isValidationErrorArray(errorBody.detail)
-      ? errorBody.detail
-      : undefined;
-
-    let message = "An API error occurred";
-    if (typeof errorBody.message === "string") {
-      message = errorBody.message;
-    } else if (typeof errorBody.detail === "string") {
-      message = errorBody.detail;
-    } else if (detailArray) {
-      message = "Request data validation failed.";
-    }
-
+    const errorBody = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
     throw new ApiError(
+      errorBody.detail || `Request failed with status ${response.status}`,
       response.status,
-      errorBody.error_code,
-      message,
-      detailArray,
+      errorBody,
     );
   }
 
-  if (response.status === 204) {
-    return null as T;
+  // Handle responses with no content (e.g., HTTP 204)
+  if (response.status === 204 || response.headers.get("Content-Length") === "0") {
+    return undefined as T;
   }
 
-  const contentType = response.headers.get("Content-Type");
-  if (contentType?.includes("application/zip")) {
-    return (await response.blob()) as unknown as T;
+  // Handle blob responses for file downloads
+  const contentType = response.headers.get("content-type");
+  if (contentType?.includes("application/zip") || contentType?.includes("application/octet-stream")) {
+    return response.blob() as Promise<T>;
   }
 
-  return response.json();
-};
+  return response.json() as Promise<T>;
+}
 
+/**
+ * A specialized client for authentication requests (login)
+ * that uses 'application/x-www-form-urlencoded'.
+ */
 export const authApiClient = {
-  login: async (
+  login: (
     username: string,
     password: string,
   ): Promise<{ access_token: string; token_type: "bearer" }> => {
-    const formData = new URLSearchParams();
-    formData.append("username", username);
-    formData.append("password", password);
+    const apiUrl = env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-    const apiBaseUrl = resolveApiBaseUrl();
+    // According to OAuth2 standards, the token endpoint expects form data.
+    const body = new URLSearchParams();
+    body.append("username", username);
+    body.append("password", password);
 
-    const response = await fetch(`${apiBaseUrl}/auth/login`, {
+    return fetch(`${apiUrl}/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: formData,
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => ({ detail: "Login failed" }));
+        throw new Error(errorBody.detail || `HTTP error! status: ${res.status}`);
+      }
+      return res.json();
     });
-
-    if (!response.ok) {
-      const errorBody = await parseErrorBody(response);
-      throw new ApiError(
-        response.status,
-        undefined,
-        typeof errorBody.detail === "string"
-          ? errorBody.detail
-          : "Incorrect email or password.",
-      );
-    }
-
-    return response.json();
   },
 };

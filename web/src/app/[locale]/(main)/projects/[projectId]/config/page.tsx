@@ -4,7 +4,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import React, { useEffect } from "react";
+import { useEffect } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -22,15 +22,12 @@ import {
 } from "~/features/dashboard/hooks/useProjects";
 import { ProjectDetailsCard } from "~/features/workspace/config/ProjectDetailsCard";
 import { ProjectFilesCard } from "~/features/workspace/config/ProjectFilesCard";
-import { useRouter } from "~/navigation";
+import { useParams, useRouter } from "~/navigation";
 
-export default function ProjectConfigPage({
-  params,
-}: {
-  params: Promise<{ projectId: string }>;
-}) {
+export default function ProjectConfigPage() {
   const router = useRouter();
-  const { projectId: projectIdParam } = React.use(params);
+  const params = useParams<{ projectId?: string }>();
+  const projectIdParam = params?.projectId;
   const projectId = Number(projectIdParam);
   const isValidProjectId = Number.isFinite(projectId);
 

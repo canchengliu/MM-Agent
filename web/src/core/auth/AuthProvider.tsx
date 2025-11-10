@@ -3,6 +3,7 @@
 
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import {
   createContext,
   useCallback,
@@ -10,12 +11,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 
 import { clearToken, getToken, setToken } from "~/core/api/client";
-import { subscribeToUnauthorized } from "~/core/auth/sessionEvents";
 import { AuthService } from "~/core/api/services/auth.service";
 import { UserService } from "~/core/api/services/user.service";
+import { subscribeToUnauthorized } from "~/core/auth/sessionEvents";
 import type { UserRead } from "~/core/domain";
 
 /**
@@ -61,10 +61,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (storedToken) {
       try {
         const userData = await UserService.getMe();
-        setUser(userData);
+        if (getToken()) {
+          // Token might be cleared via logout while getMe is in-flight.
+          setUser(userData);
+        }
       } catch (error_) {
         console.error("Token validation failed, logging out.", error_);
-        logout();
+        if (getToken()) {
+          // Avoid redundant logout if a separate action already removed the token.
+          logout();
+        }
       }
     }
     setIsLoading(false);

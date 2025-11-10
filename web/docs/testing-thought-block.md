@@ -62,7 +62,7 @@
 ### 控制台检查
 ```javascript
 // 检查消息对象
-const messages = useStore.getState().messages;
+const messages = useWorkspaceStore.getState().messages;
 const lastMessage = Array.from(messages.values()).pop();
 console.log('Reasoning content:', lastMessage?.reasoningContent);
 ```

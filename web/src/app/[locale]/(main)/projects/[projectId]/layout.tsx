@@ -12,7 +12,6 @@ import {
 import * as React from "react";
 import type { ReactNode } from "react";
 import type { ImperativePanelHandle } from "react-resizable-panels";
-import { usePathname, useRouter } from "~/navigation";
 import { useShallow } from "zustand/react/shallow";
 
 import { Button } from "~/components/ui/button";
@@ -42,18 +41,18 @@ import { useProjectDetail } from "~/features/dashboard/hooks/useProjects";
 import { ProjectWorkspaceProvider } from "~/features/workspace/context/ProjectWorkspaceContext";
 import { InspectorPanel } from "~/features/workspace/inspector";
 import { NavigatorPanel } from "~/features/workspace/navigator/NavigatorPanel";
+import { useParams, usePathname, useRouter } from "~/navigation";
 
 export default function ProjectWorkspaceLayout({
   children,
-  params,
 }: {
   children: ReactNode;
-  params: Promise<{ projectId: string }>;
 }) {
   const pathname = usePathname();
+  const params = useParams<{ projectId?: string }>();
   const pathSegments = pathname.split("/").filter(Boolean);
   const isFlowRoute = pathSegments[pathSegments.length - 1] === "flow";
-  const { projectId: projectIdParam } = React.use(params);
+  const projectIdParam = params?.projectId;
   const projectId = Number(projectIdParam);
   const isValidProjectId = Number.isFinite(projectId);
   const navigatorPanelRef = React.useRef<ImperativePanelHandle | null>(null);

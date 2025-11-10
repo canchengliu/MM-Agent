@@ -10,3 +10,5 @@ export const { Link, redirect, usePathname, useRouter, getPathname } =
       mode: "always",
     },
   });
+
+export { useParams } from "next/navigation";

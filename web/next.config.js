@@ -40,6 +40,18 @@ const config = {
 
   // ... rest of the configuration.
   output: "standalone",
+
+  async rewrites() {
+    const apiBaseUrl = (
+      process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
+    ).replace(/\/$/, "");
+    return [
+      {
+        source: "/api/proxy/:path*",
+        destination: `${apiBaseUrl}/:path*`,
+      },
+    ];
+  },
 };
 
 export default withNextIntl(config);

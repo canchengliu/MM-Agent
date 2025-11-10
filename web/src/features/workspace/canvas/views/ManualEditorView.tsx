@@ -17,6 +17,20 @@ import type { NodeDetailView } from "~/core/domain";
 import { useWorkspaceStore } from "~/core/store";
 import { useManualEdit } from "~/features/workspace/hooks/useNodeActions";
 
+const coerceValue = (text: string, originalValue: unknown): unknown => {
+  if (typeof originalValue === "number") {
+    const num = Number.parseFloat(text);
+    return Number.isNaN(num) ? text : num;
+  }
+  if (typeof originalValue === "boolean") {
+    const normalized = text.toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+    return text;
+  }
+  return text;
+};
+
 interface EditableFieldProps {
   fieldKey: string;
   initialValue: unknown;
@@ -66,7 +80,8 @@ function EditableField({
         debouncedOnUpdate(fieldKey, null, false);
       }
     } else {
-      debouncedOnUpdate(fieldKey, newText, true);
+      const coerced = coerceValue(newText, initialValue);
+      debouncedOnUpdate(fieldKey, coerced, true);
     }
   };
 

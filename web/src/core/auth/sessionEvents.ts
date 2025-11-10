@@ -15,7 +15,7 @@ export const subscribeToUnauthorized = (
   };
 };
 
-export const emitUnauthorized = (): void => {
+export const publishUnauthorized = (): void => {
   unauthorizedListeners.forEach((listener) => {
     try {
       listener();
@@ -24,3 +24,6 @@ export const emitUnauthorized = (): void => {
     }
   });
 };
+
+// Backward compatibility for modules that may still import emitUnauthorized.
+export const emitUnauthorized = publishUnauthorized;
