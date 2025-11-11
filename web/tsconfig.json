@@ -38,5 +38,10 @@
     "**/*.js",
     ".next/types/**/*.ts"
   ],
-  "exclude": ["node_modules", "tests/**/*.test.ts", "tests/**/*.test.tsx"]
+  "exclude": [
+    "node_modules",
+    "tests/**/*.test.ts",
+    "tests/**/*.test.tsx",
+    "src/legacy-deerflow-reference/**/*"
+  ]
 }

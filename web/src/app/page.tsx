@@ -1,48 +1,47 @@
-// Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
-// SPDX-License-Identifier: MIT
-
-import { useTranslations } from 'next-intl';
-import { useMemo } from "react";
-
-import { SiteHeader } from "./chat/components/site-header";
-import { Jumbotron } from "./landing/components/jumbotron";
-import { Ray } from "./landing/components/ray";
-import { CaseStudySection } from "./landing/sections/case-study-section";
-import { CoreFeatureSection } from "./landing/sections/core-features-section";
-import { JoinCommunitySection } from "./landing/sections/join-community-section";
-import { MultiAgentSection } from "./landing/sections/multi-agent-section";
+import Link from "next/link";
 
 export default function HomePage() {
   return (
-    <div className="flex flex-col items-center">
-      <SiteHeader />
-      <main className="container flex flex-col items-center justify-center gap-56">
-        <Jumbotron />
-        <CaseStudySection />
-        <MultiAgentSection />
-        <CoreFeatureSection />
-        <JoinCommunitySection />
-      </main>
-      <Footer />
-      <Ray />
-    </div>
-  );
-}
-function Footer() {
-  const t = useTranslations('footer');
-  const year = useMemo(() => new Date().getFullYear(), []);
-  return (
-    <footer className="container mt-32 flex flex-col items-center justify-center">
-      <hr className="from-border/0 via-border/70 to-border/0 m-0 h-px w-full border-none bg-gradient-to-r" />
-      <div className="text-muted-foreground container flex h-20 flex-col items-center justify-center text-sm">
-        <p className="text-center font-serif text-lg md:text-xl">
-          &quot;{t('quote')}&quot;
+    <div className="mx-auto flex min-h-[calc(100vh-8rem)] max-w-5xl flex-col gap-12 py-16">
+      <section className="space-y-6 text-center">
+        <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
+          Cognitive Cockpit
         </p>
-      </div>
-      <div className="text-muted-foreground container mb-8 flex flex-col items-center justify-center text-xs">
-        <p>{t('license')}</p>
-        <p>&copy; {year} {t('copyright')}</p>
-      </div>
-    </footer>
+        <h1 className="text-4xl font-semibold md:text-5xl">
+          Unified control surface for multi-agent workflows.
+        </h1>
+        <p className="text-base text-muted-foreground md:text-lg">
+          Configure projects, monitor staleness, and collaborate on HITL tasks
+          from a single cockpit experience.
+        </p>
+        <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <Link
+            href="/(auth)/login"
+            className="rounded bg-primary px-6 py-3 font-medium text-primary-foreground"
+          >
+            Sign in
+          </Link>
+          <Link
+            href="/(auth)/register"
+            className="rounded border border-border px-6 py-3 font-medium"
+          >
+            Request access
+          </Link>
+        </div>
+      </section>
+      <section className="grid gap-4 md:grid-cols-3">
+        {["Workflow Graph", "Dashboard", "HITL Bridge"].map((item) => (
+          <div
+            key={item}
+            className="rounded border border-border bg-card p-4 text-left"
+          >
+            <h3 className="text-lg font-semibold">{item}</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Placeholder content describing how {item} fits in the cockpit.
+            </p>
+          </div>
+        ))}
+      </section>
+    </div>
   );
 }

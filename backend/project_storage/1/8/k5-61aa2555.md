@@ -1,0 +1,2126 @@
+# Folder Structure of /Users/ann/Documents/projects/mm_agent_backend/backend
+
+## backend
+ - __init__.py
+ - config.py
+ - database.py
+ - exceptions.py
+ - main.py
+ - workflow_definition.py
+ - ws_manager.py
+
+### __init__.py Content:
+
+```py
+"""Backend package for the O-Award Workflow Engine."""
+
+
+```
+
+### config.py Content:
+
+```py
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    """Runtime configuration for the workflow engine."""
+
+    DATABASE_URL: str = "sqlite:///./workflow_engine_optimized.db"
+    EXTERNAL_DATA_DIR: str = "./external_data_simulation"
+    LLM_MODEL_NAME: str = "O-Award-Model-Optimized-v2.1"
+    DEFAULT_TEMPERATURE: float = 0.1
+
+
+settings = Settings()
+
+```
+
+### database.py Content:
+
+```py
+from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+from backend.config import settings
+
+connect_args = {"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {}
+engine = create_engine(settings.DATABASE_URL, connect_args=connect_args)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+```
+
+### exceptions.py Content:
+
+```py
+class WorkflowException(Exception):
+    def __init__(self, message: str, status_code: int = 400):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+
+class NotFoundException(WorkflowException):
+    def __init__(self, message: str):
+        super().__init__(message, status_code=404)
+
+
+class InvalidStateException(WorkflowException):
+    def __init__(self, message: str):
+        super().__init__(message, status_code=409)
+
+
+class ForbiddenException(WorkflowException):
+    def __init__(self, message: str):
+        super().__init__(message, status_code=403)
+
+
+class DependencyException(WorkflowException):
+    def __init__(self, message: str):
+        super().__init__(message, status_code=424)
+
+
+```
+
+### main.py Content:
+
+```py
+import logging
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+
+from backend.database import Base, engine
+from backend.routers.nodes import router as nodes_router
+from backend.routers.workflows import router as workflows_router
+from backend.ws_manager import manager as ws_manager
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Initializing database tables...")
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database initialization complete.")
+    yield
+
+
+app = FastAPI(
+    title="O-Award Workflow Engine Backend - Optimized Implementation",
+    version="2.1.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(workflows_router)
+app.include_router(nodes_router)
+
+
+@app.websocket("/ws/{workflow_id}")
+async def websocket_endpoint(workflow_id: int, websocket: WebSocket):
+    """WebSocket endpoint for real-time workflow updates."""
+    await ws_manager.connect(workflow_id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(workflow_id, websocket)
+    except Exception as exc:
+        logger.error("WebSocket error for workflow %s: %s", workflow_id, exc)
+        ws_manager.disconnect(workflow_id, websocket)
+
+
+@app.get("/")
+def read_root():
+    return {"message": "Workflow Engine Backend (Optimized Version) is running."}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
+
+```
+
+### workflow_definition.py Content:
+
+```py
+from enum import Enum
+
+
+class NodeType(str, Enum):
+    STANDARD = "Standard"
+    GENERATOR = "Generator"
+
+
+class HITLMode(str, Enum):
+    VARL = "VARL"
+    SCA = "SCA"
+    AVL = "AVL"
+
+
+KEY_PRIMARY_ARTIFACT = "primary_artifact"
+KEY_CANDIDATES = "candidates"
+KEY_ANALYSIS = "comparative_analysis"
+KEY_CRITIQUES = "critiques"
+KEY_ID = "id"
+PREVIOUS_IN_TASK = "__PREVIOUS_IN_TASK__"
+
+WORKFLOW_DEFINITION = {
+    "name": "O-Award Modeling Workflow",
+    "structure": [
+        {
+            "id": "1.1.1",
+            "name": "Problem Deconstruction and Mathematical Formulation",
+            "phase": "Phase 1: Strategic Analysis & Macro Architecture",
+            "type": NodeType.STANDARD,
+            "hitl_mode": HITLMode.AVL,
+            "dependencies": {},
+            "external_inputs": ["Problem Statement", "Datasets"],
+        },
+        {
+            "id": "1.1.2",
+            "name": "Architecture Design and Task Decomposition",
+            "phase": "Phase 1: Strategic Analysis & Macro Architecture",
+            "type": NodeType.GENERATOR,
+            "hitl_mode": HITLMode.SCA,
+            "dependencies": {
+                "1.1.1": {"required_fields": ["Formal Problem Restatement", "Global Assumption Framework"]}
+            },
+            "external_inputs": [],
+        },
+        {
+            "id": "3.1.1",
+            "name": "Global Logic Integration and Strategic Narrative Construction",
+            "phase": "Phase 3: Global Synthesis & O-Award Paper Forging",
+            "type": NodeType.STANDARD,
+            "hitl_mode": HITLMode.SCA,
+            "dependencies": {
+                "1.1.1": {"required_fields": ["Formal Problem Restatement"]},
+                "1.1.2": {"required_fields": ["Structured Modeling Taskbook"]},
+            },
+            "external_inputs": [],
+        },
+        {
+            "id": "3.1.2",
+            "name": "Paper Forging and Professional Optimization",
+            "phase": "Phase 3: Global Synthesis & O-Award Paper Forging",
+            "type": NodeType.STANDARD,
+            "hitl_mode": HITLMode.VARL,
+            "dependencies": {
+                "3.1.1": {"required_fields": ["Thesis Statement", "Narrative Outline"]}
+            },
+            "external_inputs": [],
+        },
+    ],
+}
+
+PHASE_2_TEMPLATE = {
+    ".2.1.1": {
+        "name_prefix": "Data Insights and Candidate Model Generation",
+        "type": NodeType.STANDARD,
+        "hitl_mode": HITLMode.SCA,
+        "inputs": {},
+        "outputs": ["Candidate Model Comparison and Justification Report"],
+    },
+    ".2.1.2": {
+        "name_prefix": "Mathematical Formulation and Computational Design",
+        "type": NodeType.STANDARD,
+        "hitl_mode": HITLMode.AVL,
+        "inputs": {
+            PREVIOUS_IN_TASK: [
+                "Candidate Model Comparison and Justification Report",
+                "Human-selected Preferred Model",
+            ]
+        },
+        "outputs": [
+            "Structured Mathematical Formulation for Task i",
+            "Computational Execution Blueprint for Task i",
+        ],
+    },
+    ".2.2.1": {
+        "name_prefix": "Code Generation and Automatic Execution",
+        "type": NodeType.STANDARD,
+        "hitl_mode": HITLMode.VARL,
+        "inputs": {
+            PREVIOUS_IN_TASK: ["Computational Execution Blueprint for Task i"]
+        },
+        "outputs": [
+            "Raw Computational Results, V&V Test Data, and Sensitivity Analysis Data"
+        ],
+    },
+    ".2.2.2": {
+        "name_prefix": "Robustness Analysis and Strategic Visualization",
+        "type": NodeType.STANDARD,
+        "hitl_mode": HITLMode.SCA,
+        "inputs": {
+            PREVIOUS_IN_TASK: [
+                "Raw Computational Results, V&V Test Data, and Sensitivity Analysis Data"
+            ]
+        },
+        "outputs": [
+            "Model V&V and Sensitivity Analysis Report for Task i",
+            "Key Output Interface Document for Task i",
+        ],
+    },
+}
+
+```
+
+### ws_manager.py Content:
+
+```py
+import json
+import logging
+from typing import Dict, List
+
+from fastapi import WebSocket
+
+logger = logging.getLogger(__name__)
+
+
+class ConnectionManager:
+    """Tracks active WebSocket connections grouped by workflow instance."""
+
+    def __init__(self):
+        self.active_connections: Dict[int, List[WebSocket]] = {}
+
+    async def connect(self, workflow_id: int, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.setdefault(workflow_id, []).append(websocket)
+        logger.info("WebSocket connected for workflow %s.", workflow_id)
+
+    def disconnect(self, workflow_id: int, websocket: WebSocket):
+        connections = self.active_connections.get(workflow_id, [])
+        try:
+            connections.remove(websocket)
+        except ValueError:
+            pass
+        if not connections and workflow_id in self.active_connections:
+            del self.active_connections[workflow_id]
+        logger.info("WebSocket disconnected for workflow %s.", workflow_id)
+
+    async def broadcast(self, workflow_id: int, message: Dict):
+        connections = self.active_connections.get(workflow_id)
+        if not connections:
+            return
+
+        payload = json.dumps(message, default=str)
+        for connection in connections[:]:
+            try:
+                await connection.send_text(payload)
+            except Exception as exc:  # Connection already closed
+                logger.warning("Failed to send WebSocket message: %s", exc)
+                self.disconnect(workflow_id, connection)
+
+
+manager = ConnectionManager()
+
+```
+
+    ## models
+     - __init__.py
+     - workflow.py
+
+### models/__init__.py Content:
+
+```py
+from backend.models.workflow import (
+    NodeInstance,
+    NodeStatus,
+    NodeVersion,
+    TemporaryExecutionResult,
+    WorkflowInstance,
+    WorkflowStatus,
+)
+
+__all__ = [
+    "WorkflowInstance",
+    "WorkflowStatus",
+    "NodeInstance",
+    "NodeStatus",
+    "NodeVersion",
+    "TemporaryExecutionResult",
+]
+
+```
+
+### models/workflow.py Content:
+
+```py
+import datetime
+from enum import Enum
+
+from sqlalchemy import (
+    JSON,
+    Column,
+    DateTime,
+    Enum as SAEnum,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import relationship
+
+from backend.database import Base
+from backend.workflow_definition import HITLMode, NodeType
+
+
+class WorkflowStatus(str, Enum):
+    RUNNING = "Running"
+    COMPLETED = "Completed"
+
+
+class WorkflowInstance(Base):
+    __tablename__ = "workflow_instances"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    status = Column(SAEnum(WorkflowStatus), default=WorkflowStatus.RUNNING)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    external_data_refs = Column(JSON, nullable=True)
+
+    nodes = relationship(
+        "NodeInstance",
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+        order_by="NodeInstance.order_index",
+    )
+
+
+class NodeStatus(str, Enum):
+    NOT_STARTED = "Not Started"
+    EXECUTING = "Executing"
+    AWAITING_HITL_APPROVAL = "Awaiting HITL Approval"
+    COMPLETED = "Completed"
+    FAILED = "Failed"
+
+
+class ExecutionStage(str, Enum):
+    """Represents granular execution progress for nodes (R4.3)."""
+
+    NOT_STARTED = "Not Started"
+    INITIALIZING = "Initializing"
+    PROCESSING = "Processing"
+    GENERATING_OUTPUTS = "Generating Outputs"
+    AWAITING_REVIEW = "Awaiting Review"
+    COMPLETED = "Completed"
+    FAILED = "Failed"
+
+
+class NodeInstance(Base):
+    __tablename__ = "node_instances"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workflow_instance_id = Column(Integer, ForeignKey("workflow_instances.id"), nullable=False)
+    definition_id = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    node_type = Column(SAEnum(NodeType), nullable=False)
+    hitl_mode = Column(SAEnum(HITLMode), nullable=False)
+    status = Column(SAEnum(NodeStatus), default=NodeStatus.NOT_STARTED)
+    current_stage = Column(SAEnum(ExecutionStage), default=ExecutionStage.NOT_STARTED)
+    order_index = Column(Integer, nullable=False)
+    active_version_id = Column(Integer, ForeignKey("node_versions.id"), nullable=True)
+    dependencies = Column(JSON, nullable=True)
+    external_inputs = Column(JSON, nullable=True)
+    phase_id = Column(String, nullable=False, index=True)
+    task_group_id = Column(String, nullable=True, index=True)
+
+    workflow = relationship("WorkflowInstance", back_populates="nodes")
+    versions = relationship("NodeVersion", back_populates="node_instance")
+    active_version = relationship("NodeVersion", foreign_keys=[active_version_id], post_update=True)
+    temporary_result = relationship(
+        "TemporaryExecutionResult",
+        back_populates="node_instance",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
+class NodeVersion(Base):
+    __tablename__ = "node_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    node_instance_id = Column(Integer, ForeignKey("node_instances.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    version_number = Column(Integer, nullable=False)
+    output_data = Column(JSON, nullable=True)
+    raw_generated_output = Column(JSON, nullable=True)
+    input_dependencies = Column(JSON, nullable=False)
+    hitl_history = Column(JSON, nullable=False)
+    llm_model_name = Column(String, nullable=False)
+    temperature = Column(Float, nullable=False)
+    summary = Column(String(512), nullable=False, default="Version created")
+
+    node_instance = relationship("NodeInstance", back_populates="versions", foreign_keys=[node_instance_id])
+
+    __table_args__ = (UniqueConstraint("node_instance_id", "version_number", name="_node_version_uc"),)
+
+
+class TemporaryExecutionResult(Base):
+    __tablename__ = "temporary_execution_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    node_instance_id = Column(Integer, ForeignKey("node_instances.id"), unique=True, nullable=False)
+    output_data = Column(JSON, nullable=True)
+    input_dependencies = Column(JSON, nullable=False)
+    accumulated_hitl_interactions = Column(JSON, nullable=False)
+    llm_model_name = Column(String, nullable=False)
+    temperature = Column(Float, nullable=False)
+    error_log = Column(Text, nullable=True)
+
+    node_instance = relationship("NodeInstance", back_populates="temporary_result")
+
+```
+
+    ## routers
+     - __init__.py
+     - nodes.py
+     - workflows.py
+
+### routers/__init__.py Content:
+
+```py
+from backend.routers.nodes import router as nodes_router
+from backend.routers.workflows import router as workflows_router
+
+__all__ = ["nodes_router", "workflows_router"]
+
+```
+
+### routers/nodes.py Content:
+
+```py
+from typing import Any, Dict, List
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from backend.database import get_db
+from backend.exceptions import WorkflowException
+from backend.schemas.hitl import ExecutionRequest, HITLSubmission
+from backend.schemas.node import NodeDetailView, NodeInstanceRead, NodeVersionRead
+from backend.services.hitl_service import HITLService
+from backend.services.node_service import NodeService
+
+router = APIRouter(prefix="/nodes", tags=["Nodes"])
+
+
+def get_node_service(db: Session = Depends(get_db)) -> NodeService:
+    return NodeService(db)
+
+
+def get_hitl_service(
+    db: Session = Depends(get_db),
+    node_service: NodeService = Depends(get_node_service),
+) -> HITLService:
+    return HITLService(db, node_service)
+
+
+@router.get("/{node_id}", response_model=NodeDetailView)
+def get_node_details(node_id: int, service: NodeService = Depends(get_node_service)):
+    try:
+        return service.get_node_detail_view(node_id)
+    except WorkflowException as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+@router.post("/{node_id}/execute", response_model=NodeInstanceRead)
+async def execute_node(node_id: int, request: ExecutionRequest, service: NodeService = Depends(get_node_service)):
+    try:
+        return await service.execute(
+            node_id,
+            user_feedback=request.modification_comments,
+            is_retry_from_hitl=False,
+            base_version_id=request.base_version_id,
+        )
+    except WorkflowException as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+@router.post("/{node_id}/hitl", response_model=Dict[str, Any])
+async def submit_hitl_action(node_id: int, submission: HITLSubmission, service: HITLService = Depends(get_hitl_service)):
+    try:
+        return await service.process_submission(node_id, submission)
+    except WorkflowException as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+@router.get("/{node_id}/versions", response_model=List[NodeVersionRead])
+def get_node_versions(node_id: int, service: NodeService = Depends(get_node_service)):
+    try:
+        return service.get_versions(node_id)
+    except WorkflowException as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+@router.get("/{node_id}/versions/{version_id}", response_model=NodeVersionRead)
+def get_node_version_details(node_id: int, version_id: int, service: NodeService = Depends(get_node_service)):
+    try:
+        return service.get_version_details(node_id, version_id)
+    except WorkflowException as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+@router.post("/{node_id}/versions/{version_id}/activate", response_model=NodeInstanceRead)
+async def activate_version(node_id: int, version_id: int, service: NodeService = Depends(get_node_service)):
+    try:
+        return await service.switch_active_version(node_id, version_id)
+    except WorkflowException as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+```
+
+### routers/workflows.py Content:
+
+```py
+from typing import Dict, List
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session, joinedload
+
+from backend.database import get_db
+from backend.exceptions import NotFoundException, WorkflowException
+from backend.models.workflow import WorkflowInstance
+from backend.schemas.node import NodeInstanceRead, StalenessInfo
+from backend.schemas.workflow import WorkflowCreate, WorkflowInstanceRead
+from backend.services.workflow_service import WorkflowService
+
+router = APIRouter(prefix="/workflows", tags=["Workflows"])
+
+
+@router.post("/", response_model=WorkflowInstanceRead, status_code=201)
+def create_workflow(workflow_data: WorkflowCreate, db: Session = Depends(get_db)):
+    service = WorkflowService(db)
+    try:
+        return service.create_workflow(workflow_data)
+    except WorkflowException as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+@router.get("/{workflow_id}", response_model=WorkflowInstanceRead)
+def get_workflow(workflow_id: int, db: Session = Depends(get_db)):
+    try:
+        workflow = (
+            db.query(WorkflowInstance)
+            .options(joinedload(WorkflowInstance.nodes))
+            .get(workflow_id)
+        )
+        if not workflow:
+            raise NotFoundException(f"Workflow {workflow_id} not found.")
+        return workflow
+    except WorkflowException as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+@router.post("/{workflow_id}/start", response_model=NodeInstanceRead)
+async def start_workflow(workflow_id: int, db: Session = Depends(get_db)):
+    service = WorkflowService(db)
+    try:
+        node = await service.start_workflow(workflow_id)
+        return node
+    except WorkflowException as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+@router.get("/{workflow_id}/staleness", response_model=Dict[int, List[StalenessInfo]])
+def get_workflow_staleness(workflow_id: int, db: Session = Depends(get_db)):
+    service = WorkflowService(db)
+    try:
+        return service.calculate_bulk_staleness(workflow_id)
+    except WorkflowException as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+```
+
+    ## schemas
+     - __init__.py
+     - events.py
+     - hitl.py
+     - node.py
+     - workflow.py
+
+### schemas/__init__.py Content:
+
+```py
+from backend.schemas.events import EventPayload, EventType
+from backend.schemas.hitl import (
+    Adjudication,
+    AdjudicationDecision,
+    ExecutionRequest,
+    HITLActionType,
+    HITLSubmission,
+)
+from backend.schemas.node import (
+    NodeDetailView,
+    NodeInstanceRead,
+    NodeVersionRead,
+    StalenessInfo,
+    TemporaryExecutionRead,
+    VersionData,
+)
+from backend.schemas.workflow import WorkflowCreate, WorkflowInstanceRead
+
+__all__ = [
+    "WorkflowCreate",
+    "WorkflowInstanceRead",
+    "NodeInstanceRead",
+    "NodeDetailView",
+    "NodeVersionRead",
+    "TemporaryExecutionRead",
+    "VersionData",
+    "StalenessInfo",
+    "HITLActionType",
+    "HITLSubmission",
+    "ExecutionRequest",
+    "AdjudicationDecision",
+    "Adjudication",
+    "EventType",
+    "EventPayload",
+]
+
+```
+
+### schemas/events.py Content:
+
+```py
+from enum import Enum
+from typing import Any, Dict, Optional
+
+from pydantic import BaseModel
+
+
+class EventType(str, Enum):
+    """WebSocket event types."""
+
+    NODE_STATUS_UPDATED = "NODE_STATUS_UPDATED"
+    WORKFLOW_STRUCTURE_UPDATED = "WORKFLOW_STRUCTURE_UPDATED"
+    WORKFLOW_STATUS_UPDATED = "WORKFLOW_STATUS_UPDATED"
+
+
+class EventPayload(BaseModel):
+    """Standardized payload for WebSocket events."""
+
+    event_type: EventType
+    workflow_id: int
+    node_id: Optional[int] = None
+    data: Dict[str, Any]
+
+```
+
+### schemas/hitl.py Content:
+
+```py
+from enum import Enum
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel
+
+
+class HITLActionType(str, Enum):
+    CONTINUE = "Continue"
+    REJECT_WITH_FEEDBACK = "RejectAndProvideModificationComments"
+    DISCARD = "Discard"
+
+
+class AdjudicationDecision(str, Enum):
+    ACCEPTED = "Accepted"
+    REJECTED = "Rejected"
+
+
+class Adjudication(BaseModel):
+    critique_id: str
+    decision: AdjudicationDecision
+    comment: Optional[str] = None
+
+
+class HITLSubmission(BaseModel):
+    action: HITLActionType
+    feedback_comment: Optional[str] = None
+    interaction_data: Optional[Dict[str, Any]] = None
+
+
+class ExecutionRequest(BaseModel):
+    modification_comments: Optional[str] = None
+    base_version_id: Optional[int] = None
+
+
+```
+
+### schemas/node.py Content:
+
+```py
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel
+
+from backend.models.workflow import ExecutionStage, NodeStatus
+from backend.workflow_definition import HITLMode, NodeType
+
+
+class NodeInstanceRead(BaseModel):
+    id: int
+    definition_id: str
+    name: str
+    status: NodeStatus
+    current_stage: ExecutionStage
+    node_type: NodeType
+    hitl_mode: HITLMode
+    order_index: int
+    active_version_id: Optional[int]
+    phase_id: str
+    task_group_id: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class VersionData(BaseModel):
+    output_data: Optional[Dict[str, Any]]
+    raw_generated_output: Optional[Dict[str, Any]]
+    input_dependencies: Dict[int, int]
+    hitl_history: List[Dict[str, Any]]
+    llm_model_name: str
+    temperature: float
+
+
+class NodeVersionRead(VersionData):
+    id: int
+    version_number: int
+    node_instance_id: int
+    summary: str
+
+    class Config:
+        from_attributes = True
+
+
+class TemporaryExecutionRead(BaseModel):
+    output_data: Optional[Dict[str, Any]]
+    accumulated_hitl_interactions: List[Dict[str, Any]]
+    error_log: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+class StalenessInfo(BaseModel):
+    """Detailed information about a stale dependency."""
+
+    upstream_node_id: int
+    upstream_definition_id: str
+    consumed_version_id: int
+    current_active_version_id: Optional[int]
+
+
+class NodeDetailView(NodeInstanceRead):
+    active_version: Optional[NodeVersionRead] = None
+    pending_result: Optional[TemporaryExecutionRead] = None
+    staleness_report: Optional[List[StalenessInfo]] = None
+
+```
+
+### schemas/workflow.py Content:
+
+```py
+from typing import Dict, List, Optional
+
+from pydantic import BaseModel
+
+from backend.models.workflow import WorkflowStatus
+from backend.schemas.node import NodeInstanceRead
+
+
+class WorkflowCreate(BaseModel):
+    name: str
+    external_data_refs: Optional[Dict[str, str]] = None
+
+
+class WorkflowInstanceRead(BaseModel):
+    id: int
+    name: str
+    status: WorkflowStatus
+    external_data_refs: Optional[Dict[str, str]]
+    nodes: List[NodeInstanceRead]
+
+    class Config:
+        from_attributes = True
+
+```
+
+    ## services
+     - __init__.py
+     - data_resolution_service.py
+     - execution_simulator.py
+     - hitl_service.py
+     - node_service.py
+     - workflow_service.py
+
+### services/__init__.py Content:
+
+```py
+"""Service layer package."""
+
+
+```
+
+### services/data_resolution_service.py Content:
+
+```py
+import logging
+import os
+from typing import Any
+
+from backend.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class DataResolutionService:
+    """Handles pass-by-reference external data resolution (Req. R3.5)."""
+
+    def __init__(self, base_dir: str):
+        self.base_dir = os.path.abspath(base_dir)
+        if not os.path.exists(self.base_dir):
+            os.makedirs(self.base_dir, exist_ok=True)
+            logger.info("External data directory initialized at %s", self.base_dir)
+
+    def resolve_external_reference(self, path: str) -> Any:
+        logger.info("Resolving external data reference: %s", path)
+
+        if "Problem Statement" in path:
+            return f"[Resolved Content] Full content of the Problem Statement from {path}."
+        if "Datasets" in path:
+            return {
+                "data": [[1, 2], [3, 4]],
+                "description": f"[Resolved Content] Simulated dataset from {path}.",
+            }
+        return f"[Resolved Content] Simulated generic content read from {path}."
+
+
+data_resolver = DataResolutionService(settings.EXTERNAL_DATA_DIR)
+
+
+```
+
+### services/execution_simulator.py Content:
+
+```py
+import asyncio
+import logging
+from typing import Any, Dict, List, Optional
+
+from backend.models.workflow import NodeInstance
+from backend.workflow_definition import (
+    HITLMode,
+    KEY_ANALYSIS,
+    KEY_CANDIDATES,
+    KEY_CRITIQUES,
+    KEY_ID,
+    KEY_PRIMARY_ARTIFACT,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class ExecutionSimulator:
+    """Simulates node execution flows for different HITL modes."""
+
+    async def execute_node(
+        self,
+        node: NodeInstance,
+        inputs: Dict[str, Any],
+        history: List[Dict[str, Any]],
+        feedback: Optional[str],
+        previous_output: Optional[Dict[str, Any]],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ) -> Dict[str, Any]:
+        await asyncio.sleep(1.0)
+        logger.info(
+            "Executing node %s (%s). Feedback: %s. Adjudication: %s",
+            node.definition_id,
+            node.hitl_mode,
+            feedback is not None,
+            adjudication_data is not None,
+        )
+
+        if node.hitl_mode == HITLMode.SCA:
+            return await self._execute_sca(node, inputs, feedback)
+        if node.hitl_mode == HITLMode.AVL:
+            return await self._execute_avl(node, inputs, feedback, previous_output, adjudication_data)
+        return await self._execute_varl(node, inputs, feedback)
+
+    async def _execute_varl(self, node: NodeInstance, inputs: Dict[str, Any], feedback: Optional[str]) -> Dict[str, Any]:
+        artifact_content = f"VARL Artifact generated/refined. Feedback: {feedback}"
+        artifact = {
+            "content": artifact_content,
+            "data": "Generic VARL data output",
+        }
+        if node.definition_id == "3.1.2":
+            artifact["Submission-Ready Paper"] = artifact_content
+        return {KEY_PRIMARY_ARTIFACT: artifact}
+
+    async def _execute_sca(self, node: NodeInstance, inputs: Dict[str, Any], feedback: Optional[str]) -> Dict[str, Any]:
+        if node.definition_id == "1.1.2":
+            candidates = self._generate_taskbook_candidates()
+        elif node.definition_id == "3.1.1":
+            candidates = self._generate_narrative_candidates()
+        else:
+            candidates = [
+                {KEY_ID: "C1", "name": "Option A", "data": "A_data"},
+                {KEY_ID: "C2", "name": "Option B", "data": "B_data"},
+            ]
+            if feedback:
+                candidates.append({KEY_ID: "C3", "name": "Option based on feedback", "data": "F_data"})
+
+        analysis = f"Comparative analysis of {len(candidates)} candidates. Option A is faster, Option B is more robust."
+        return {
+            KEY_CANDIDATES: candidates,
+            KEY_ANALYSIS: analysis,
+        }
+
+    def _generate_narrative_candidates(self) -> List[Dict[str, Any]]:
+        return [
+            {KEY_ID: "N1", "Thesis Statement": "Thesis A", "Narrative Outline": "Outline A"},
+            {KEY_ID: "N2", "Thesis Statement": "Thesis B", "Narrative Outline": "Outline B"},
+        ]
+
+    def _generate_taskbook_candidates(self) -> List[Dict[str, Any]]:
+        task_a1 = {
+            "task_id": "Task_A1",
+            "task_name": "Define Objective",
+            "io_interfaces": {"inputs": {"1.1.1": ["Formal Problem Restatement"]}, "outputs": ["Objective Function"]},
+            "external_inputs": ["Problem Statement"],
+        }
+        task_a2 = {
+            "task_id": "Task_A2",
+            "task_name": "Solve Optimization",
+            "io_interfaces": {"inputs": {}, "outputs": ["Optimal Solution"]},
+            "external_inputs": ["Datasets"],
+        }
+        return [
+            {
+                KEY_ID: "OptA",
+                "name": "Optimization Approach",
+                "Structured Modeling Taskbook": {"tasks": [task_a1, task_a2]},
+            },
+            {
+                KEY_ID: "OptB",
+                "name": "Simulation Approach",
+                "Structured Modeling Taskbook": {
+                    "tasks": [
+                        {"task_id": "Task_B1", "task_name": "Build Sim", "io_interfaces": {}, "external_inputs": []}
+                    ]
+                },
+            },
+        ]
+
+    async def _execute_avl(
+        self,
+        node: NodeInstance,
+        inputs: Dict[str, Any],
+        feedback: Optional[str],
+        previous_output: Optional[Dict[str, Any]],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ) -> Dict[str, Any]:
+        if adjudication_data or feedback:
+            context = adjudication_data if adjudication_data else feedback
+            previous_artifact_content = "N/A"
+            if previous_output and KEY_PRIMARY_ARTIFACT in previous_output:
+                previous_artifact_content = previous_output[KEY_PRIMARY_ARTIFACT].get("content", "N/A")
+            artifact_content = f"AVL Artifact refined with context {context}. Prev: {previous_artifact_content}"
+        else:
+            artifact_content = "AVL Artifact generated. (Initial)."
+
+        artifact = {
+            "content": artifact_content,
+            "data": "Generic AVL data output",
+        }
+        if node.definition_id == "1.1.1":
+            artifact["Formal Problem Restatement"] = f"Restatement: {artifact_content[:100]}..."
+            artifact["Global Assumption Framework"] = "Assumptions derived from artifact..."
+
+        critiques = await self._critique(node, artifact, adjudication_data)
+        return {
+            KEY_PRIMARY_ARTIFACT: artifact,
+            KEY_CRITIQUES: critiques,
+        }
+
+    async def _critique(
+        self,
+        node: NodeInstance,
+        artifact: Dict[str, Any],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        if adjudication_data:
+            return [
+                {
+                    KEY_ID: "c3",
+                    "critique": "Refinement addressed major issues, but introduced a minor boundary condition error.",
+                    "severity": "Low",
+                }
+            ]
+        return [
+            {KEY_ID: "c1", "critique": "The core assumption lacks justification.", "severity": "High"},
+            {KEY_ID: "c2", "critique": "Terminology is ambiguous.", "severity": "Medium"},
+        ]
+
+
+simulator = ExecutionSimulator()
+
+```
+
+### services/hitl_service.py Content:
+
+```py
+import datetime
+import logging
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from pydantic import ValidationError
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from backend.exceptions import InvalidStateException
+from backend.models.workflow import ExecutionStage, NodeInstance, NodeStatus, NodeVersion
+from backend.schemas.hitl import (
+    Adjudication,
+    AdjudicationDecision,
+    HITLActionType,
+    HITLSubmission,
+)
+from backend.services.node_service import NodeService
+from backend.workflow_definition import (
+    HITLMode,
+    KEY_CANDIDATES,
+    KEY_CRITIQUES,
+    KEY_ID,
+    KEY_PRIMARY_ARTIFACT,
+)
+
+if TYPE_CHECKING:
+    from backend.services.workflow_service import WorkflowService
+
+logger = logging.getLogger(__name__)
+
+
+class HITLService:
+    def __init__(self, db: Session, node_service: NodeService):
+        self.db = db
+        self.node_service = node_service
+
+    async def process_submission(self, node_id: int, submission: HITLSubmission) -> Dict[str, Any]:
+        node = self.node_service.get_node_instance(node_id)
+
+        if submission.action == HITLActionType.DISCARD:
+            if node.status in [NodeStatus.AWAITING_HITL_APPROVAL, NodeStatus.FAILED]:
+                return await self._discard_execution(node)
+            raise InvalidStateException(f"Cannot discard execution in status {node.status}.")
+
+        if node.status != NodeStatus.AWAITING_HITL_APPROVAL:
+            raise InvalidStateException(f"Cannot process HITL submission in status {node.status}.")
+
+        if submission.action == HITLActionType.CONTINUE:
+            return await self._handle_approval_or_loop(node, submission.interaction_data or {})
+        if submission.action == HITLActionType.REJECT_WITH_FEEDBACK:
+            return await self._reject_and_retry(node, submission.feedback_comment)
+
+        raise InvalidStateException("Unsupported HITL action.")
+
+    async def _handle_approval_or_loop(self, node: NodeInstance, interaction_data: Optional[Dict[str, Any]]):
+        self._validate_hitl_integrity(node, interaction_data)
+
+        if node.hitl_mode == HITLMode.AVL:
+            adjudication_data_list = (interaction_data or {}).get("adjudication", [])
+            if any(item.get("decision") == AdjudicationDecision.ACCEPTED for item in adjudication_data_list):
+                self._record_interaction(node, "AVLAdjudication", interaction_data)
+                await self.node_service.execute(node.id, adjudication_data=adjudication_data_list)
+                return {
+                    "message": "Adjudication received. Starting AVL refinement iteration.",
+                    "node_id": node.id,
+                    "action": "AVLLoop",
+                }
+        return await self._approve_and_proceed(node, interaction_data)
+
+    async def _approve_and_proceed(self, node: NodeInstance, interaction_data: Optional[Dict[str, Any]]):
+        raw_output = node.temporary_result.output_data
+        final_output = self._determine_final_output(node, raw_output, interaction_data)
+
+        try:
+            new_version = self._create_version_from_temporary(node, final_output, raw_output, interaction_data)
+            node.active_version_id = new_version.id
+            node.status = NodeStatus.COMPLETED
+            node.current_stage = ExecutionStage.COMPLETED
+            self.db.delete(node.temporary_result)
+            self.db.commit()
+            self.db.refresh(node)
+            await self.node_service._broadcast_node_update(node)
+        except Exception as exc:
+            self.db.rollback()
+            logger.error("Failed to finalize approval: %s", exc)
+            raise InvalidStateException(f"Failed to finalize approval due to error: {exc}")
+
+        from backend.services.workflow_service import WorkflowService
+
+        workflow_service: WorkflowService = WorkflowService(self.db)
+        await workflow_service.handle_generator_node_completion(node, final_output)
+        next_node = workflow_service.get_next_node(node)
+
+        if not next_node:
+            await workflow_service.complete_workflow(node.workflow_instance_id)
+            return {"message": "Workflow completed successfully.", "next_node_id": None, "action": "Completed"}
+
+        if next_node.status == NodeStatus.NOT_STARTED:
+            await self.node_service.execute(next_node.id)
+            return {
+                "message": f"Node approved. Starting next node {next_node.definition_id}.",
+                "next_node_id": next_node.id,
+                "action": "ExecuteNext",
+            }
+        return {
+            "message": f"Node approved. Navigating to review next node {next_node.definition_id}.",
+            "next_node_id": next_node.id,
+            "action": "NavigateNext",
+        }
+
+    def _validate_hitl_integrity(self, node: NodeInstance, interaction_data: Optional[Dict[str, Any]]):
+        raw_output = node.temporary_result.output_data
+        if node.hitl_mode == HITLMode.SCA:
+            if not interaction_data or "selected_ids" not in interaction_data:
+                raise InvalidStateException("SCA requires 'selected_ids' in interaction_data.")
+            selected_ids = interaction_data["selected_ids"]
+            if not isinstance(selected_ids, list) or len(selected_ids) < 1:
+                raise InvalidStateException("SCA requires at least one selection.")
+            if node.definition_id in ["1.1.2", "3.1.1"] and len(selected_ids) != 1:
+                raise InvalidStateException(f"Node {node.definition_id} requires exactly one selection.")
+            candidates = raw_output.get(KEY_CANDIDATES, [])
+            available_ids = {c.get(KEY_ID) for c in candidates if c.get(KEY_ID)}
+            if not set(selected_ids).issubset(available_ids):
+                raise InvalidStateException("Submitted 'selected_ids' contain invalid IDs.")
+
+        if node.hitl_mode == HITLMode.AVL:
+            critiques = raw_output.get(KEY_CRITIQUES, [])
+            if not critiques:
+                return
+            if not interaction_data or "adjudication" not in interaction_data:
+                raise InvalidStateException("AVL requires 'adjudication' data when critiques are present.")
+            adjudication_data_list = interaction_data["adjudication"]
+            try:
+                adjudications = [Adjudication(**data) for data in adjudication_data_list]
+            except ValidationError as exc:
+                raise InvalidStateException(f"Invalid adjudication data structure: {exc}")
+            if len(adjudications) != len(critiques):
+                raise InvalidStateException("Adjudication data must be provided for all active critiques.")
+            available_ids = {c.get(KEY_ID) for c in critiques if c.get(KEY_ID)}
+            submitted_ids = {a.critique_id for a in adjudications}
+            if submitted_ids != available_ids:
+                raise InvalidStateException("Mismatch between active critiques and adjudication decisions.")
+
+    def _determine_final_output(
+        self,
+        node: NodeInstance,
+        raw_output: Dict[str, Any],
+        interaction_data: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        if node.hitl_mode == HITLMode.SCA:
+            selected_ids = set(interaction_data["selected_ids"])
+            candidates = raw_output.get(KEY_CANDIDATES, [])
+            selected_items = [candidate for candidate in candidates if candidate.get(KEY_ID) in selected_ids]
+            if len(selected_items) == 1:
+                return selected_items[0]
+            return {"selected_items": selected_items, "data": "Aggregated SCA data"}
+
+        if node.hitl_mode in [HITLMode.AVL, HITLMode.VARL]:
+            if KEY_PRIMARY_ARTIFACT in raw_output:
+                return raw_output[KEY_PRIMARY_ARTIFACT]
+            return raw_output
+
+        return raw_output
+
+    async def _reject_and_retry(self, node: NodeInstance, feedback: Optional[str]):
+        if not feedback:
+            raise InvalidStateException("Feedback comment is required for rejection.")
+        self._record_interaction(node, "RejectionFeedback", {"comment": feedback})
+        await self.node_service.execute(
+            node.id,
+            user_feedback=feedback,
+            is_retry_from_hitl=True,
+        )
+        return {"message": "Feedback received. Re-executing node.", "node_id": node.id, "action": "ReExecute"}
+
+    def _record_interaction(self, node: NodeInstance, interaction_type: str, data: Dict[str, Any]):
+        temp_result = node.temporary_result
+        interactions = temp_result.accumulated_hitl_interactions or []
+        interaction = {
+            "type": interaction_type,
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "data": data,
+        }
+        interactions.append(interaction)
+        temp_result.accumulated_hitl_interactions = interactions[:]  # copy for SQLAlchemy change tracking
+        self.db.commit()
+
+    async def _discard_execution(self, node: NodeInstance) -> Dict[str, Any]:
+        if node.temporary_result:
+            self.db.delete(node.temporary_result)
+        if node.active_version_id:
+            node.status = NodeStatus.COMPLETED
+            node.current_stage = ExecutionStage.COMPLETED
+        else:
+            node.status = NodeStatus.NOT_STARTED
+            node.current_stage = ExecutionStage.NOT_STARTED
+        self.db.commit()
+        self.db.refresh(node)
+        await self.node_service._broadcast_node_update(node)
+        return {"message": "Execution attempt discarded. Status reverted.", "node_id": node.id, "action": "Discarded"}
+
+    def _generate_version_summary(self, interactions: List[Dict[str, Any]]) -> str:
+        """Create a concise, context-aware explanation for the version."""
+
+        if not interactions:
+            return "Initial version approved."
+
+        for interaction in reversed(interactions):
+            interaction_type = interaction.get("type")
+            data = interaction.get("data", {})
+
+            if interaction_type == "AVLAdjudication":
+                adjudications = data.get("adjudication", [])
+                accepted_count = sum(1 for item in adjudications if item.get("decision") == AdjudicationDecision.ACCEPTED)
+                if accepted_count > 0:
+                    first_comment = next(
+                        (
+                            item.get("comment")
+                            for item in adjudications
+                            if item.get("decision") == AdjudicationDecision.ACCEPTED and item.get("comment")
+                        ),
+                        None,
+                    )
+                    summary = f"Refined (Accepted {accepted_count} critiques)."
+                    if first_comment:
+                        summary += f" Context: '{first_comment[:60]}...'"
+                    return summary
+                return "Approved (Rejected all critiques)."
+
+            if interaction_type in ["RejectionFeedback", "InitialModificationComment", "RetryModificationComment"]:
+                comment = data.get("comment")
+                if comment:
+                    if interaction_type == "InitialModificationComment":
+                        prefix = "Re-executed"
+                    elif interaction_type == "RetryModificationComment":
+                        prefix = "Retried"
+                    else:
+                        prefix = "Refined"
+                    return f"{prefix} based on feedback: '{comment[:80]}...'"
+
+        return "Version approved."
+
+    def _create_version_from_temporary(
+        self,
+        node: NodeInstance,
+        final_output: Dict[str, Any],
+        raw_output: Dict[str, Any],
+        interaction_data: Optional[Dict[str, Any]],
+    ) -> NodeVersion:
+        temp_result = node.temporary_result
+        with self.db.begin_nested():
+            self.db.query(NodeInstance).filter_by(id=node.id).with_for_update().one_or_none()
+            max_version = (
+                self.db.query(func.max(NodeVersion.version_number))
+                .filter_by(node_instance_id=node.id)
+                .scalar()
+            )
+            next_version_number = (max_version or 0) + 1
+            summary = self._generate_version_summary(temp_result.accumulated_hitl_interactions)
+            final_interactions = temp_result.accumulated_hitl_interactions[:]
+            final_interactions.append(
+                {
+                    "type": "Approval",
+                    "interaction_data": interaction_data,
+                    "timestamp": datetime.datetime.utcnow().isoformat(),
+                }
+            )
+            new_version = NodeVersion(
+                node_instance_id=node.id,
+                version_number=next_version_number,
+                output_data=final_output,
+                raw_generated_output=raw_output,
+                input_dependencies=self.node_service._normalize_dependency_map(temp_result.input_dependencies),
+                hitl_history=final_interactions,
+                llm_model_name=temp_result.llm_model_name,
+                temperature=temp_result.temperature,
+                summary=summary,
+            )
+            self.db.add(new_version)
+            self.db.flush()
+        self.db.refresh(new_version)
+        return new_version
+
+```
+
+### services/node_service.py Content:
+
+```py
+import datetime
+import logging
+import traceback
+from typing import Any, Dict, List, Optional, Tuple
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
+
+from backend.config import settings
+from backend.exceptions import DependencyException, ForbiddenException, InvalidStateException, NotFoundException
+from backend.models.workflow import (
+    ExecutionStage,
+    NodeInstance,
+    NodeStatus,
+    NodeVersion,
+    TemporaryExecutionResult,
+    WorkflowInstance,
+)
+from backend.schemas.events import EventType
+from backend.schemas.node import (
+    NodeDetailView,
+    NodeInstanceRead,
+    NodeVersionRead,
+    StalenessInfo,
+    TemporaryExecutionRead,
+)
+from backend.services.data_resolution_service import data_resolver
+from backend.services.execution_simulator import simulator
+from backend.utils.event_utils import broadcast_event
+from backend.workflow_definition import HITLMode, NodeType
+
+logger = logging.getLogger(__name__)
+
+
+class NodeService:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_node_instance(self, node_id: int) -> NodeInstance:
+        node = self.db.query(NodeInstance).get(node_id)
+        if not node:
+            raise NotFoundException(f"NodeInstance with id {node_id} not found.")
+        return node
+
+    async def execute(
+        self,
+        node_id: int,
+        user_feedback: Optional[str] = None,
+        is_retry_from_hitl: bool = False,
+        base_version_id: Optional[int] = None,
+        adjudication_data: Optional[List[Dict[str, Any]]] = None,
+    ) -> NodeInstance:
+        node = self.get_node_instance(node_id)
+        self._validate_execution_request(node, user_feedback, is_retry_from_hitl, base_version_id, adjudication_data)
+
+        previous_output: Optional[Dict[str, Any]] = None
+        previous_hitl_history: List[Dict[str, Any]] = []
+        temp_result: Optional[TemporaryExecutionResult] = None
+
+        if is_retry_from_hitl or adjudication_data:
+            temp_result = node.temporary_result
+            if not temp_result:
+                raise InvalidStateException("Temporary execution context missing for retry.")
+            resolved_inputs, input_dependency_map = self._resolve_dependencies_from_map(node, temp_result.input_dependencies)
+            previous_hitl_history = temp_result.accumulated_hitl_interactions or []
+            previous_output = temp_result.output_data
+        elif node.status == NodeStatus.FAILED:
+            resolved_inputs, input_dependency_map, previous_hitl_history = self._handle_retry_from_failure(
+                node, user_feedback
+            )
+            temp_result = node.temporary_result
+        else:
+            resolved_inputs, input_dependency_map = self._resolve_dependencies(node)
+            if node.temporary_result:
+                self.db.delete(node.temporary_result)
+                self.db.flush()
+
+            version_to_use_id = base_version_id if base_version_id is not None else node.active_version_id
+            if version_to_use_id:
+                base_version = self.db.query(NodeVersion).get(version_to_use_id)
+                if base_version:
+                    previous_hitl_history = base_version.hitl_history or []
+
+            temp_result = self._create_temporary_result(node, input_dependency_map, previous_hitl_history, user_feedback)
+
+        if not temp_result:
+            raise InvalidStateException("Temporary execution context is required for node execution.")
+
+        temp_result.error_log = None
+        self.db.flush()
+
+        node.status = NodeStatus.EXECUTING
+        node.current_stage = ExecutionStage.INITIALIZING
+        self.db.commit()
+        await self._broadcast_node_update(node)
+
+        try:
+            node.current_stage = ExecutionStage.PROCESSING
+            self.db.commit()
+            await self._broadcast_node_update(node)
+
+            execution_output = await simulator.execute_node(
+                node,
+                resolved_inputs,
+                previous_hitl_history,
+                user_feedback,
+                previous_output,
+                adjudication_data,
+            )
+
+            node.current_stage = ExecutionStage.GENERATING_OUTPUTS
+            self.db.commit()
+            await self._broadcast_node_update(node)
+
+            temp_result.output_data = execution_output
+            temp_result.error_log = None
+            node.status = NodeStatus.AWAITING_HITL_APPROVAL
+            node.current_stage = ExecutionStage.AWAITING_REVIEW
+        except Exception as exc:
+            logger.exception("Execution failed for node %s", node.id)
+            temp_result.error_log = f"Error: {exc}\nTraceback:\n{traceback.format_exc()}"
+            temp_result.output_data = None
+            node.status = NodeStatus.FAILED
+            node.current_stage = ExecutionStage.FAILED
+
+        self.db.commit()
+        self.db.refresh(node)
+        await self._broadcast_node_update(node)
+        return node
+
+    def _handle_retry_from_failure(
+        self, node: NodeInstance, user_feedback: Optional[str]
+    ) -> Tuple[Dict[str, Any], Dict[int, int], List[Dict[str, Any]]]:
+        """
+        Preserve the FAILED attempt context so retries continue the same execution thread.
+        """
+        if not node.temporary_result:
+            raise InvalidStateException("Cannot retry FAILED node without a temporary execution result.")
+
+        temp_result = node.temporary_result
+        temp_result.error_log = None
+
+        interactions = temp_result.accumulated_hitl_interactions or []
+        if user_feedback:
+            interactions.append(
+                {
+                    "type": "RetryModificationComment",
+                    "data": {"comment": user_feedback},
+                    "timestamp": datetime.datetime.utcnow().isoformat(),
+                }
+            )
+        temp_result.accumulated_hitl_interactions = interactions[:]
+
+        resolved_inputs, input_dependency_map = self._resolve_dependencies_from_map(
+            node, temp_result.input_dependencies
+        )
+        return resolved_inputs, input_dependency_map, interactions
+
+    def _validate_execution_request(
+        self,
+        node: NodeInstance,
+        user_feedback: Optional[str],
+        is_retry_from_hitl: bool,
+        base_version_id: Optional[int],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ):
+        if adjudication_data:
+            if node.hitl_mode != HITLMode.AVL:
+                raise InvalidStateException("Adjudication data can only be provided for AVL nodes.")
+            if node.status != NodeStatus.AWAITING_HITL_APPROVAL or not node.temporary_result:
+                raise InvalidStateException(
+                    "Cannot continue AVL loop unless status is AWAITING_HITL_APPROVAL with pending results."
+                )
+            if is_retry_from_hitl or user_feedback or base_version_id is not None:
+                raise InvalidStateException("Conflicting parameters provided for AVL loop continuation.")
+            return
+
+        if is_retry_from_hitl:
+            if node.status != NodeStatus.AWAITING_HITL_APPROVAL or not node.temporary_result:
+                raise InvalidStateException(
+                    "Cannot retry from HITL unless status is AWAITING_HITL_APPROVAL with temporary results."
+                )
+            if not user_feedback:
+                raise InvalidStateException("Feedback must be provided for HITL retry.")
+            if base_version_id is not None:
+                raise InvalidStateException("base_version_id cannot be specified during a HITL retry loop.")
+            return
+
+        if node.node_type == NodeType.GENERATOR and node.status == NodeStatus.COMPLETED:
+            raise ForbiddenException("Generator nodes cannot be re-executed once completed.")
+
+        allowed_states = [NodeStatus.NOT_STARTED, NodeStatus.COMPLETED, NodeStatus.FAILED]
+        if node.status not in allowed_states:
+            raise InvalidStateException(f"Cannot start execution when status is {node.status}.")
+
+        if base_version_id is not None:
+            exists = (
+                self.db.query(NodeVersion.id)
+                .filter_by(id=base_version_id, node_instance_id=node.id)
+                .scalar()
+                is not None
+            )
+            if not exists:
+                raise InvalidStateException(
+                    f"Base version id {base_version_id} does not exist or does not belong to node {node.id}."
+                )
+
+    def _normalize_dependency_map(self, dependency_map: Dict[int, int]) -> Dict[int, int]:
+        if not dependency_map:
+            return {}
+        return {int(k): v for k, v in dependency_map.items()}
+
+    def _resolve_external_inputs(self, node: NodeInstance) -> Dict[str, Any]:
+        resolved_external: Dict[str, Any] = {}
+        if not node.external_inputs:
+            return resolved_external
+
+        workflow: WorkflowInstance = self.db.query(WorkflowInstance).get(node.workflow_instance_id)
+        if not workflow or not workflow.external_data_refs:
+            raise DependencyException("Node requires external inputs, but none found in workflow instance.")
+
+        for input_name in node.external_inputs:
+            if input_name not in workflow.external_data_refs:
+                raise DependencyException(f"Required external input reference '{input_name}' missing.")
+            path = workflow.external_data_refs[input_name]
+            try:
+                resolved_external[input_name] = data_resolver.resolve_external_reference(path)
+            except Exception as exc:
+                raise DependencyException(f"Failed to resolve external input '{input_name}' from path '{path}': {exc}")
+        return resolved_external
+
+    def _resolve_dependencies(self, node: NodeInstance) -> Tuple[Dict[str, Any], Dict[int, int]]:
+        input_dependency_map: Dict[int, int] = {}
+        resolved_inputs = self._resolve_external_inputs(node)
+
+        if not node.dependencies:
+            return resolved_inputs, input_dependency_map
+
+        upstream_definition_ids = list(node.dependencies.keys())
+        upstream_nodes = (
+            self.db.query(NodeInstance)
+            .filter(
+                NodeInstance.workflow_instance_id == node.workflow_instance_id,
+                NodeInstance.definition_id.in_(upstream_definition_ids),
+            )
+            .options(joinedload(NodeInstance.active_version))
+            .all()
+        )
+
+        found_definition_ids = set()
+        for upstream in upstream_nodes:
+            definition_id = upstream.definition_id
+            found_definition_ids.add(definition_id)
+            if upstream.status != NodeStatus.COMPLETED or not upstream.active_version:
+                raise DependencyException(f"Upstream dependency '{definition_id}' is not completed.")
+
+            upstream_output = upstream.active_version.output_data or {}
+            dependency_spec = node.dependencies.get(definition_id, {})
+            required_fields = dependency_spec.get("required_fields", [])
+
+            if required_fields:
+                missing_fields = [field for field in required_fields if field not in upstream_output]
+                if missing_fields:
+                    raise DependencyException(f"Upstream dependency '{definition_id}' is missing fields: {missing_fields}")
+
+            upstream_input_data: Dict[str, Any] = {}
+            if required_fields:
+                for field in required_fields:
+                    upstream_input_data[field] = upstream_output[field]
+            resolved_inputs[definition_id] = upstream_input_data
+            input_dependency_map[upstream.id] = upstream.active_version_id
+
+        if len(found_definition_ids) != len(upstream_definition_ids):
+            missing = set(upstream_definition_ids) - found_definition_ids
+            raise DependencyException(f"Could not resolve dependencies: {missing}")
+        return resolved_inputs, input_dependency_map
+
+    def _resolve_dependencies_from_map(
+        self,
+        node: NodeInstance,
+        dependency_map: Dict[int, int],
+        db_session: Optional[Session] = None,
+    ) -> Tuple[Dict[str, Any], Dict[int, int]]:
+        db = db_session or self.db
+        normalized_map = self._normalize_dependency_map(dependency_map)
+        try:
+            resolved_inputs = self._resolve_external_inputs(node)
+        except DependencyException as exc:
+            logger.error("Fatal: Failed to re-resolve external inputs during retry for node %s: %s", node.id, exc)
+            raise
+
+        version_ids = list(normalized_map.values())
+        if not version_ids:
+            return resolved_inputs, normalized_map
+
+        versions = db.query(NodeVersion).filter(NodeVersion.id.in_(version_ids)).options(
+            joinedload(NodeVersion.node_instance)
+        ).all()
+        version_lookup = {version.id: version for version in versions}
+
+        for node_id_value, version_id in normalized_map.items():
+            version = version_lookup.get(version_id)
+            if not version:
+                raise NotFoundException(f"Dependency version {version_id} not found.")
+
+            definition_id = version.node_instance.definition_id
+            upstream_output = version.output_data or {}
+            dependency_spec = node.dependencies.get(definition_id, {}) if node.dependencies else {}
+            required_fields = dependency_spec.get("required_fields", [])
+
+            if required_fields:
+                missing_fields = [field for field in required_fields if field not in upstream_output]
+                if missing_fields:
+                    raise DependencyException(
+                        f"Upstream dependency '{definition_id}' is missing fields: {missing_fields}"
+                    )
+
+            upstream_input_data: Dict[str, Any] = {}
+            if required_fields:
+                for field in required_fields:
+                    upstream_input_data[field] = upstream_output[field]
+            resolved_inputs[definition_id] = upstream_input_data
+
+        return resolved_inputs, normalized_map
+
+    def _create_temporary_result(
+        self,
+        node: NodeInstance,
+        input_map: Dict[int, int],
+        history: List[Dict[str, Any]],
+        initial_feedback: Optional[str],
+    ) -> TemporaryExecutionResult:
+        interactions = history[:]
+        if initial_feedback:
+            interactions.append(
+                {
+                    "type": "InitialModificationComment",
+                    "data": {"comment": initial_feedback},
+                    "timestamp": datetime.datetime.utcnow().isoformat(),
+                }
+            )
+
+        temp_result = TemporaryExecutionResult(
+            node_instance_id=node.id,
+            input_dependencies=input_map,
+            accumulated_hitl_interactions=interactions,
+            llm_model_name=settings.LLM_MODEL_NAME,
+            temperature=settings.DEFAULT_TEMPERATURE,
+        )
+        self.db.add(temp_result)
+        self.db.flush()
+        return temp_result
+
+    def get_node_detail_view(self, node_id: int) -> NodeDetailView:
+        node = (
+            self.db.query(NodeInstance)
+            .options(joinedload(NodeInstance.active_version), joinedload(NodeInstance.temporary_result))
+            .get(node_id)
+        )
+        if not node:
+            raise NotFoundException(f"NodeInstance with id {node_id} not found.")
+
+        if node.status == NodeStatus.NOT_STARTED and node.order_index != 0:
+            raise ForbiddenException("Cannot jump to or review a node that has not yet started execution.")
+
+        view = NodeDetailView.model_validate(node)
+        if node.active_version:
+            view.active_version = NodeVersionRead.model_validate(node.active_version)
+        if node.temporary_result:
+            view.pending_result = TemporaryExecutionRead.model_validate(node.temporary_result)
+
+        inputs_to_check = None
+        if node.status == NodeStatus.COMPLETED and node.active_version:
+            inputs_to_check = node.active_version.input_dependencies
+        elif node.temporary_result:
+            inputs_to_check = node.temporary_result.input_dependencies
+
+        if inputs_to_check:
+            normalized_inputs = self._normalize_dependency_map(inputs_to_check)
+            staleness_report = self._check_staleness(normalized_inputs)
+            view.staleness_report = staleness_report or None
+
+        return view
+
+    def _check_staleness(self, input_map: Dict[int, int]) -> List[StalenessInfo]:
+        if not input_map:
+            return []
+
+        staleness_report: List[StalenessInfo] = []
+        upstream_node_ids = list(input_map.keys())
+        upstream_nodes = self.db.query(NodeInstance).filter(NodeInstance.id.in_(upstream_node_ids)).all()
+
+        for upstream in upstream_nodes:
+            consumed_version_id = input_map.get(upstream.id)
+            if upstream.active_version_id != consumed_version_id:
+                staleness_report.append(
+                    StalenessInfo(
+                        upstream_node_id=upstream.id,
+                        upstream_definition_id=upstream.definition_id,
+                        consumed_version_id=consumed_version_id,
+                        current_active_version_id=upstream.active_version_id,
+                    )
+                )
+        return staleness_report
+
+    async def switch_active_version(self, node_id: int, version_id: int) -> NodeInstance:
+        node = self.get_node_instance(node_id)
+        version = self.db.query(NodeVersion).filter_by(id=version_id, node_instance_id=node_id).first()
+        if not version:
+            raise InvalidStateException(f"Version {version_id} does not belong to node {node_id}.")
+        if node.node_type == NodeType.GENERATOR:
+            raise ForbiddenException("Switching versions on Generator nodes is forbidden.")
+        node.active_version_id = version_id
+        status_changed = False
+        if node.status not in [NodeStatus.EXECUTING, NodeStatus.AWAITING_HITL_APPROVAL]:
+            if node.status != NodeStatus.COMPLETED:
+                node.status = NodeStatus.COMPLETED
+                node.current_stage = ExecutionStage.COMPLETED
+                status_changed = True
+        self.db.commit()
+        self.db.refresh(node)
+
+        if status_changed:
+            await self._broadcast_node_update(node)
+
+        return node
+
+    async def _broadcast_node_update(self, node: NodeInstance):
+        """Broadcasts a standardized node update event."""
+
+        node_data = NodeInstanceRead.model_validate(node).model_dump(mode="json")
+        await broadcast_event(node.workflow_instance_id, EventType.NODE_STATUS_UPDATED, node_data, node_id=node.id)
+
+    def get_versions(self, node_id: int) -> List[NodeVersion]:
+        self.get_node_instance(node_id)
+        return (
+            self.db.query(NodeVersion)
+            .filter(NodeVersion.node_instance_id == node_id)
+            .order_by(NodeVersion.version_number.desc())
+            .all()
+        )
+
+    def get_version_details(self, node_id: int, version_id: int) -> NodeVersionRead:
+        version = self.db.query(NodeVersion).filter_by(id=version_id, node_instance_id=node_id).first()
+        if not version:
+            raise NotFoundException(f"Version {version_id} for Node {node_id} not found.")
+        return NodeVersionRead.model_validate(version)
+
+```
+
+### services/workflow_service.py Content:
+
+```py
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy.orm import Session, joinedload
+
+from backend.exceptions import InvalidStateException, NotFoundException
+from backend.models.workflow import ExecutionStage, NodeInstance, NodeStatus, WorkflowInstance, WorkflowStatus
+from backend.schemas.node import StalenessInfo
+from backend.schemas.workflow import WorkflowInstanceRead
+from backend.services.node_service import NodeService
+from backend.utils.event_utils import broadcast_event
+from backend.workflow_definition import (
+    PHASE_2_TEMPLATE,
+    PREVIOUS_IN_TASK,
+    WORKFLOW_DEFINITION,
+    NodeType,
+)
+from backend.schemas.events import EventType
+
+
+class WorkflowService:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_workflow_instance(self, workflow_id: int) -> WorkflowInstance:
+        workflow = self.db.query(WorkflowInstance).get(workflow_id)
+        if not workflow:
+            raise NotFoundException(f"WorkflowInstance {workflow_id} not found.")
+        return workflow
+
+    def create_workflow(self, create_data) -> WorkflowInstance:
+        workflow = WorkflowInstance(name=create_data.name, external_data_refs=create_data.external_data_refs)
+        self.db.add(workflow)
+        self.db.flush()
+        self._initialize_nodes(workflow)
+        self.db.commit()
+        self.db.refresh(workflow)
+        return workflow
+
+    def _initialize_nodes(self, workflow: WorkflowInstance):
+        order_index = 0
+        for node_def in WORKFLOW_DEFINITION["structure"]:
+            node = NodeInstance(
+                workflow_instance_id=workflow.id,
+                definition_id=node_def["id"],
+                name=node_def["name"],
+                node_type=node_def["type"],
+                hitl_mode=node_def["hitl_mode"],
+                dependencies=node_def.get("dependencies", {}),
+                external_inputs=node_def.get("external_inputs", []),
+                order_index=order_index,
+                phase_id=node_def["phase"],
+                task_group_id=node_def.get("task_group_id"),
+                current_stage=ExecutionStage.NOT_STARTED,
+            )
+            self.db.add(node)
+            order_index += 1
+
+    async def start_workflow(self, workflow_id: int) -> NodeInstance:
+        workflow = self.get_workflow_instance(workflow_id)
+        first_node = (
+            self.db.query(NodeInstance)
+            .filter_by(workflow_instance_id=workflow_id, order_index=0)
+            .first()
+        )
+        if not first_node:
+            raise InvalidStateException("Workflow has no nodes.")
+        if first_node.status != NodeStatus.NOT_STARTED:
+            if first_node.status != NodeStatus.FAILED or first_node.active_version_id is not None:
+                raise InvalidStateException("Workflow has already been started.")
+        if workflow.status != WorkflowStatus.RUNNING:
+            workflow.status = WorkflowStatus.RUNNING
+            self.db.commit()
+            await self._broadcast_workflow_update(workflow)
+
+        node_service = NodeService(self.db)
+        return await node_service.execute(first_node.id)
+
+    def get_next_node(self, current_node: NodeInstance) -> Optional[NodeInstance]:
+        return (
+            self.db.query(NodeInstance)
+            .filter_by(
+                workflow_instance_id=current_node.workflow_instance_id,
+                order_index=current_node.order_index + 1,
+            )
+            .first()
+        )
+
+    async def handle_generator_node_completion(self, node: NodeInstance, output: Dict[str, Any]):
+        self.db.refresh(node)
+        if node.node_type != NodeType.GENERATOR or node.status != NodeStatus.COMPLETED:
+            return
+
+        taskbook_data = output.get("Structured Modeling Taskbook", {})
+        taskbook = taskbook_data.get("tasks")
+        if not taskbook:
+            return
+
+        insertion_index = node.order_index + 1
+        total_nodes_to_insert = len(taskbook) * len(PHASE_2_TEMPLATE)
+        self._shift_subsequent_nodes(node.workflow_instance_id, insertion_index, total_nodes_to_insert)
+        new_phase2_nodes = self._insert_dynamic_tasks(node.workflow_instance_id, insertion_index, taskbook)
+        self._update_phase3_dependencies(node.workflow_instance_id, new_phase2_nodes)
+        self.db.commit()
+
+        await self._broadcast_structure_update(node.workflow_instance_id)
+
+    def _shift_subsequent_nodes(self, workflow_id: int, start_index: int, shift_amount: int):
+        (
+            self.db.query(NodeInstance)
+            .filter(NodeInstance.workflow_instance_id == workflow_id, NodeInstance.order_index >= start_index)
+            .update({NodeInstance.order_index: NodeInstance.order_index + shift_amount}, synchronize_session=False)
+        )
+
+    def _insert_dynamic_tasks(
+        self,
+        workflow_id: int,
+        start_index: int,
+        taskbook: List[Dict[str, Any]],
+    ) -> List[NodeInstance]:
+        current_index = start_index
+        all_new_nodes: List[NodeInstance] = []
+        phase_2_name = "Phase 2: Cyclic Sub-problem Execution"
+
+        for task in taskbook:
+            task_id = task["task_id"]
+            io_interfaces = task.get("io_interfaces", {})
+            task_specific_inputs = io_interfaces.get("inputs") or {}
+            task_external_inputs = task.get("external_inputs") or []
+            previous_node_in_task_def_id: Optional[str] = None
+
+            for id_suffix, template in PHASE_2_TEMPLATE.items():
+                definition_id = f"{task_id}{id_suffix}"
+                name = f"[{task_id}] {template['name_prefix']}"
+                dependencies = {
+                    "1.1.1": {"required_fields": ["Formal Problem Restatement"]},
+                    "1.1.2": {"required_fields": ["Structured Modeling Taskbook"]},
+                }
+
+                for upstream_def_id, required_fields in task_specific_inputs.items():
+                    fields_list = (
+                        required_fields if isinstance(required_fields, list) else [required_fields]
+                    )
+                    dependencies[upstream_def_id] = {"required_fields": list(fields_list)}
+
+                template_inputs = template.get("inputs", {})
+                if PREVIOUS_IN_TASK in template_inputs and previous_node_in_task_def_id:
+                    required_fields = list(template_inputs[PREVIOUS_IN_TASK])
+                    dependencies[previous_node_in_task_def_id] = {"required_fields": required_fields}
+
+                for upstream_def_id, required_fields in template_inputs.items():
+                    if upstream_def_id == PREVIOUS_IN_TASK:
+                        continue
+                    dependencies[upstream_def_id] = {"required_fields": list(required_fields)}
+
+                new_node = NodeInstance(
+                    workflow_instance_id=workflow_id,
+                    definition_id=definition_id,
+                    name=name,
+                    node_type=template["type"],
+                    hitl_mode=template["hitl_mode"],
+                    dependencies=dependencies,
+                    external_inputs=task_external_inputs,
+                    order_index=current_index,
+                    phase_id=phase_2_name,
+                    task_group_id=task_id,
+                    current_stage=ExecutionStage.NOT_STARTED,
+                )
+                self.db.add(new_node)
+                all_new_nodes.append(new_node)
+                current_index += 1
+                previous_node_in_task_def_id = definition_id
+
+        self.db.flush()
+        return all_new_nodes
+
+    def _update_phase3_dependencies(self, workflow_id: int, phase2_nodes: List[NodeInstance]):
+        """Ensure node 3.1.1 depends on outputs from each Phase 2 robustness node."""
+        node_311 = (
+            self.db.query(NodeInstance)
+            .filter_by(workflow_instance_id=workflow_id, definition_id="3.1.1")
+            .first()
+        )
+        if not node_311:
+            return
+        current_deps = node_311.dependencies or {}
+        for p2_node in phase2_nodes:
+            if p2_node.definition_id.endswith(".2.2.2"):
+                required_fields = list(PHASE_2_TEMPLATE[".2.2.2"]["outputs"])
+                current_deps[p2_node.definition_id] = {"required_fields": required_fields}
+        node_311.dependencies = current_deps.copy()
+
+    async def complete_workflow(self, workflow_id: int):
+        workflow = self.get_workflow_instance(workflow_id)
+        workflow.status = WorkflowStatus.COMPLETED
+        self.db.commit()
+        await self._broadcast_workflow_update(workflow)
+
+    def calculate_bulk_staleness(self, workflow_id: int) -> Dict[int, List[StalenessInfo]]:
+        """Returns detailed staleness reports for all workflow nodes."""
+
+        self.get_workflow_instance(workflow_id)
+        nodes = (
+            self.db.query(NodeInstance)
+            .filter(NodeInstance.workflow_instance_id == workflow_id)
+            .options(joinedload(NodeInstance.active_version))
+            .all()
+        )
+
+        active_version_map: Dict[int, Optional[int]] = {node.id: node.active_version_id for node in nodes}
+        definition_id_map: Dict[int, str] = {node.id: node.definition_id for node in nodes}
+
+        bulk_report: Dict[int, List[StalenessInfo]] = {}
+        node_service = NodeService(self.db)
+
+        for node in nodes:
+            if node.status == NodeStatus.COMPLETED and node.active_version:
+                input_dependencies = node.active_version.input_dependencies or {}
+                normalized_inputs = node_service._normalize_dependency_map(input_dependencies)
+                node_staleness: List[StalenessInfo] = []
+
+                for upstream_node_id, consumed_version_id in normalized_inputs.items():
+                    current_active_version_id = active_version_map.get(upstream_node_id)
+                    if current_active_version_id != consumed_version_id:
+                        node_staleness.append(
+                            StalenessInfo(
+                                upstream_node_id=upstream_node_id,
+                                upstream_definition_id=definition_id_map.get(upstream_node_id, "N/A"),
+                                consumed_version_id=consumed_version_id,
+                                current_active_version_id=current_active_version_id,
+                            )
+                        )
+
+                if node_staleness:
+                    bulk_report[node.id] = node_staleness
+
+        return bulk_report
+
+    async def _broadcast_structure_update(self, workflow_id: int):
+        workflow = (
+            self.db.query(WorkflowInstance)
+            .options(joinedload(WorkflowInstance.nodes))
+            .get(workflow_id)
+        )
+        if workflow:
+            workflow_data = WorkflowInstanceRead.model_validate(workflow).model_dump(mode="json")
+            await broadcast_event(workflow_id, EventType.WORKFLOW_STRUCTURE_UPDATED, workflow_data)
+
+    async def _broadcast_workflow_update(self, workflow: WorkflowInstance):
+        if not workflow.nodes:
+            self.db.refresh(workflow, ["nodes"])
+
+        workflow_data = WorkflowInstanceRead.model_validate(workflow).model_dump(mode="json")
+        await broadcast_event(workflow.id, EventType.WORKFLOW_STATUS_UPDATED, workflow_data)
+        await self._broadcast_workflow_update(workflow)
+
+```
+
+    ## utils
+     - __init__.py
+     - event_utils.py
+
+### utils/__init__.py Content:
+
+```py
+"""Utility helpers for the backend package."""
+
+```
+
+### utils/event_utils.py Content:
+
+```py
+from typing import Optional
+
+from backend.schemas.events import EventPayload, EventType
+from backend.ws_manager import manager
+
+
+async def broadcast_event(workflow_id: int, event_type: EventType, data: dict, node_id: Optional[int] = None):
+    """Broadcasts a standardized event payload over the workflow WebSocket."""
+
+    payload = EventPayload(event_type=event_type, workflow_id=workflow_id, node_id=node_id, data=data)
+    await manager.broadcast(workflow_id, payload.model_dump(mode="json"))
+
+```
+

@@ -4,26 +4,29 @@
 import "~/styles/globals.css";
 
 import { type Metadata } from "next";
-import { Geist } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
-import { NextIntlClientProvider } from 'next-intl';
-import { getLocale, getMessages } from 'next-intl/server';
+import { NextIntlClientProvider } from "next-intl";
+import { getLocale, getMessages } from "next-intl/server";
 
-import { ThemeProviderWrapper } from "~/components/deer-flow/theme-provider-wrapper";
+import { AppProviders } from "~/components/providers/app-providers";
 import { env } from "~/env";
 
-import { Toaster } from "../components/deer-flow/toaster";
-
 export const metadata: Metadata = {
-  title: "🦌 DeerFlow",
+  title: "🧭 Cognitive Cockpit",
   description:
-    "Deep Exploration and Efficient Research, an AI tool that combines language models with specialized tools for research tasks.",
+    "Next-generation workspace for orchestrating workflow graphs, HITL steps, and operations dashboards.",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 
 const geist = Geist({
   subsets: ["latin"],
   variable: "--font-geist-sans",
+});
+
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  variable: "--font-geist-mono",
 });
 
 export default async function RootLayout({
@@ -33,7 +36,11 @@ export default async function RootLayout({
   const messages = await getMessages();
   
   return (
-    <html lang={locale} className={`${geist.variable}`} suppressHydrationWarning>
+    <html
+      lang={locale}
+      className={`${geist.variable} ${geistMono.variable}`}
+      suppressHydrationWarning
+    >
       <head>
         {/* Define isSpace function globally to fix markdown-it issues with Next.js + Turbopack
           https://github.com/markdown-it/markdown-it/issues/1082#issuecomment-2749656365 */}
@@ -48,9 +55,8 @@ export default async function RootLayout({
         </Script>
       </head>
       <body className="bg-app">
-        <NextIntlClientProvider messages={messages}>
-          <ThemeProviderWrapper>{children}</ThemeProviderWrapper>
-          <Toaster />
+        <NextIntlClientProvider locale={locale} messages={messages}>
+          <AppProviders>{children}</AppProviders>
         </NextIntlClientProvider>
         {
           // NO USER BEHAVIOR TRACKING OR PRIVATE DATA COLLECTION BY DEFAULT

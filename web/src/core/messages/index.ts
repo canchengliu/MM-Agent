@@ -1,5 +1,30 @@
-// Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
-// SPDX-License-Identifier: MIT
+export interface Resource {
+  id: string;
+  title: string;
+  url?: string;
+  type?: string;
+}
 
-export * from "./types";
-export * from "./merge-message";
+export interface Message {
+  id: string;
+  threadId: string;
+  role: string;
+  content: string;
+  contentChunks?: string[];
+  reasoningContent?: string;
+  reasoningContentChunks?: string[];
+  resources?: Resource[];
+  agent?: string;
+  toolCalls?: Array<{ id: string }>;
+  isStreaming?: boolean;
+  interruptFeedback?: string;
+  finishReason?: string;
+  options?: unknown;
+}
+
+export function mergeMessage(message: Message, event: unknown): Message {
+  if (event && typeof event === "object") {
+    return { ...message, ...(event as Record<string, unknown>) };
+  }
+  return message;
+}

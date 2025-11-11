@@ -8,6 +8,9 @@
   --font-sans:
     var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-mono:
+    var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
 
   --animate-fade-in: fade-in 1s;
   @keyframes fade-in {
@@ -28,6 +31,16 @@
     to {
       opacity: 1;
       transform: translate(-50%, -40%) scale(1);
+    }
+  }
+
+  /* Keyframes for the ripple effect animation on graph edges */
+  @keyframes ripple-edge {
+    from {
+      stroke-dashoffset: 20;
+    }
+    to {
+      stroke-dashoffset: 0;
     }
   }
 }
@@ -108,40 +121,45 @@
 }
 
 :root {
-  --radius: 0.625rem;
-  --app-background: #fffaf5;
-  --background: oklch(1 0 0);
-  --foreground: rgba(0, 0, 0, 0.72);
-  --card: oklch(1 0 0);
-  --card-foreground: var(--foreground);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-  --brand: #007aff;
+  --radius: 0.75rem;
+  --app-background: 220 13% 97%;
+  --background: 0 0% 100%;
+  --foreground: 224 71.4% 4.1%;
+  --card: 0 0% 100%;
+  --card-foreground: 224 71.4% 4.1%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 224 71.4% 4.1%;
+  --primary: 210 90% 50%;
+  --primary-foreground: 210 20% 98%;
+  --secondary: 220 14.3% 95.9%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+  --muted: 220 14.3% 95.9%;
+  --muted-foreground: 220 8.9% 46.1%;
+  --accent: 220 14.3% 95.9%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 210 20% 98%;
+  --warning: 45 100% 51%;
+  --warning-foreground: 45 100% 5%;
+  --success: 142 70% 45%;
+  --success-foreground: 142 70% 5%;
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  --ring: 210 90% 50%;
+  --chart-1: 195 85% 40%;
+  --chart-2: 172 72% 41%;
+  --chart-3: 202 64% 52%;
+  --chart-4: 265 70% 65%;
+  --chart-5: 43 96% 56%;
+  --sidebar: 0 0% 100%;
+  --sidebar-foreground: 224 71.4% 4.1%;
+  --sidebar-primary: 210 90% 50%;
+  --sidebar-primary-foreground: 210 20% 98%;
+  --sidebar-accent: 220 14.3% 95.9%;
+  --sidebar-accent-foreground: 224 71.4% 4.1%;
+  --sidebar-border: 220 13% 91%;
+  --sidebar-ring: 210 90% 50%;
+  --brand: #33d8ff;
 
   --novel-highlight-default: #ffffff;
   --novel-highlight-purple: #f6f3f8;
@@ -155,39 +173,44 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --app-background: var(--background);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 20%);
-  --input: oklch(1 0 0 / 25%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
-  --brand: rgb(17, 103, 234);
+  --background: 240 10% 3.9%;
+  --app-background: 240 10% 7%;
+  --foreground: 210 20% 98%;
+  --card: 240 5% 15%;
+  --card-foreground: 210 20% 98%;
+  --popover: 240 5% 12%;
+  --popover-foreground: 210 20% 98%;
+  --primary: 195 85% 50%;
+  --primary-foreground: 195 85% 5%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 210 20% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --accent: 240 3.7% 20%;
+  --accent-foreground: 210 20% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 85.7% 97.3%;
+  --warning: 43 96% 56%;
+  --warning-foreground: 43 96% 5%;
+  --success: 142 70% 35%;
+  --success-foreground: 142 70% 95%;
+  --border: 240 3.7% 25%;
+  --input: 240 3.7% 15.9%;
+  --ring: 195 85% 50%;
+  --chart-1: 195 85% 55%;
+  --chart-2: 172 70% 45%;
+  --chart-3: 202 65% 55%;
+  --chart-4: 265 70% 65%;
+  --chart-5: 43 96% 56%;
+  --sidebar: 240 5% 15%;
+  --sidebar-foreground: 210 20% 98%;
+  --sidebar-primary: 195 85% 50%;
+  --sidebar-primary-foreground: 210 20% 98%;
+  --sidebar-accent: 240 5% 20%;
+  --sidebar-accent-foreground: 210 20% 98%;
+  --sidebar-border: 240 3.7% 25%;
+  --sidebar-ring: 195 85% 50%;
+  --brand: #33d8ff;
 
   --novel-highlight-default: #000000;
   --novel-highlight-purple: #3f2c4b;
@@ -205,7 +228,44 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-app text-foreground;
+    font-family: var(--font-geist-sans);
+  }
+
+  /* Ripple Edge Animation Class */
+  .ripple-edge-animation .react-flow__edge-path {
+    stroke: hsl(var(--warning));
+    stroke-width: 2;
+    stroke-dasharray: 5;
+    animation: ripple-edge 1.5s linear infinite;
+  }
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-geist-mono);
+}
+
+@layer components {
+  @supports (backdrop-filter: blur(24px)) or
+    (-webkit-backdrop-filter: blur(24px)) {
+    .dark [data-slot="card"],
+    .dark [data-slot="dialog-content"],
+    .dark nav {
+      background-color: hsl(var(--card) / 0.7);
+      border-color: hsl(var(--border) / 0.3);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+    }
+
+    .dark [data-slot="popover-content"] {
+      background-color: hsl(var(--popover) / 0.8);
+      border-color: hsl(var(--border) / 0.4);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+    }
   }
 }
 
