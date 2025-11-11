@@ -41,7 +41,7 @@ class HITLService:
         node = self.node_service.get_node_instance(node_id, user=user)
 
         if submission.action == HITLActionType.DISCARD:
-            if node.status in [NodeStatus.AWAITING_HITL_APPROVAL, NodeStatus.FAILED]:
+            if node.status in [NodeStatus.AWAITING_HITL_APPROVAL, NodeStatus.FAILED, NodeStatus.CANCELED]:
                 return await self._discard_execution(node)
             raise InvalidStateException(f"Cannot discard execution in status {node.status}.")
 
@@ -236,14 +236,19 @@ class HITLService:
         self.db.commit()
 
     async def _discard_execution(self, node: NodeInstance) -> Dict[str, Any]:
+        if node.status not in [NodeStatus.AWAITING_HITL_APPROVAL, NodeStatus.FAILED, NodeStatus.CANCELED]:
+            raise InvalidStateException(f"Cannot discard execution in status {node.status}.")
+
         if node.temporary_result:
             self.db.delete(node.temporary_result)
+
         if node.active_version_id:
             node.status = NodeStatus.COMPLETED
             node.current_stage = ExecutionStage.COMPLETED
         else:
             node.status = NodeStatus.NOT_STARTED
             node.current_stage = ExecutionStage.NOT_STARTED
+
         self.db.commit()
         self.db.refresh(node)
         await self.node_service._broadcast_node_update(node)
@@ -317,6 +322,8 @@ class HITLService:
             )
             version_source = self._determine_version_source(final_interactions)
             base_version_id = node.active_version_id
+            execution_artifacts = temp_result.execution_artifacts
+
             new_version = NodeVersion(
                 node_instance_id=node.id,
                 version_number=next_version_number,
@@ -324,6 +331,7 @@ class HITLService:
                 based_on_version_id=base_version_id,
                 output_data=final_output,
                 raw_generated_output=raw_output,
+                execution_artifacts=execution_artifacts,
                 input_dependencies=temp_result.input_dependencies,
                 hitl_history=final_interactions,
                 llm_model_name=temp_result.llm_model_name,

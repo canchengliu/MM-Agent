@@ -18,6 +18,7 @@ class NodeInstanceRead(BaseModel):
     active_version_id: Optional[int]
     phase_id: str
     task_group_id: Optional[str] = None
+    is_stale: bool = False
 
     class Config:
         from_attributes = True
@@ -28,6 +29,7 @@ class VersionData(BaseModel):
     based_on_version_id: Optional[int]
     output_data: Optional[Dict[str, Any]]
     raw_generated_output: Optional[Dict[str, Any]]
+    execution_artifacts: Optional[Dict[str, Any]]
     input_dependencies: Dict[int, int]
     hitl_history: List[Dict[str, Any]]
     llm_model_name: str
@@ -46,6 +48,7 @@ class NodeVersionRead(VersionData):
 
 class TemporaryExecutionRead(BaseModel):
     output_data: Optional[Dict[str, Any]]
+    execution_artifacts: Optional[Dict[str, Any]]
     accumulated_hitl_interactions: List[Dict[str, Any]]
     error_log: Optional[str]
 

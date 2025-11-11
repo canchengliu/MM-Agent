@@ -8,7 +8,7 @@ from backend.auth.security import create_access_token
 from backend.auth.service import AuthService
 from backend.database import get_db
 from backend.exceptions import InvalidStateException
-from backend.schemas.auth import Token
+from backend.schemas.auth import EmailVerificationRequest, ResendVerificationRequest, Token
 from backend.schemas.user import UserCreate, UserRead
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -57,9 +57,29 @@ def register_user(
         raise exc
 
 
+@router.post("/verify-email", response_model=UserRead)
+def verify_email(
+    request: EmailVerificationRequest,
+    db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """Verify the user's email address using the provided token."""
+    return auth_service.verify_email(db, request.token)
+
+
+@router.post("/resend-verification-email", status_code=status.HTTP_202_ACCEPTED)
+def resend_verification_email(
+    request: ResendVerificationRequest,
+    db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """Resend the verification email."""
+    auth_service.handle_resend_verification(db, request.email)
+    return {"message": "If the account exists and is not verified, a verification email has been sent."}
+
+
 @router.post("/reset-password", status_code=status.HTTP_202_ACCEPTED)
 async def request_password_reset(auth_service: AuthService = Depends(get_auth_service)):
     """Stub endpoint for initiating password reset flow."""
     auth_service.reset_password()
     return {"message": "If an account with this email exists, a password reset link has been sent."}
-

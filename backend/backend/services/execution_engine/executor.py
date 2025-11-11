@@ -11,6 +11,7 @@ import asyncio
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+from pydantic import BaseModel, Field
 
 from backend.models.user import ThinkingDepth
 from backend.models.workflow import NodeInstance
@@ -27,6 +28,13 @@ from backend.workflow_definition import (
     KEY_SCA_OUTPUT,
     KEY_SELECTED_ITEM,
 )
+
+
+class ExecutionResult(BaseModel):
+    """Structured result from a node execution, including output and artifacts."""
+
+    output_data: Dict[str, Any]
+    artifacts: Dict[str, Any] = Field(default_factory=dict)
 
 
 class NodeExecutor:
@@ -50,7 +58,7 @@ class NodeExecutor:
         feedback: Optional[str],
         previous_output: Optional[Dict[str, Any]],
         adjudication_data: Optional[List[Dict[str, Any]]],
-    ) -> Dict[str, Any]:
+    ) -> ExecutionResult:
         await asyncio.sleep(1.0)
         logger.info(
             "Executing node with NodeExecutor",
@@ -66,9 +74,12 @@ class NodeExecutor:
             return await self._execute_avl(node, inputs, feedback, previous_output, adjudication_data)
         return await self._execute_varl(node, inputs, feedback)
 
-    async def _execute_varl(self, node: NodeInstance, inputs: Dict[str, Any], feedback: Optional[str]) -> Dict[str, Any]:
+    async def _execute_varl(
+        self, node: NodeInstance, inputs: Dict[str, Any], feedback: Optional[str]
+    ) -> ExecutionResult:
         prompt = f"Generate a VARL artifact. Feedback: {feedback}"
         llm_response = await self.llm_client.generate_text(prompt)
+        artifacts: Dict[str, Any] = {"prompt": prompt}
 
         artifact = {
             "content": llm_response,
@@ -77,16 +88,22 @@ class NodeExecutor:
         if node.definition_id == "3.1.2":
             artifact["Submission-Ready Paper"] = llm_response
         elif node.definition_id.endswith(".2.2.1"):
-            # This part would involve the sandbox client
-            code_to_run = "print('Simulated execution')"  # Placeholder
+            code_to_run = f"# Python code generated for {node.definition_id}\nprint('Simulated execution')"
+            artifacts["generated_code.py"] = code_to_run
             sandbox_result = await self.sandbox_client.execute_code(code_to_run)
+            artifacts["execution.log"] = sandbox_result.get("stdout", "")
+            if sandbox_result.get("stderr"):
+                artifacts["error.log"] = sandbox_result.get("stderr", "")
             artifact["raw_results"] = sandbox_result.get("results", "Simulated Raw Data")
             artifact["vv_data"] = "Simulated V&V Data from sandbox"
             artifact["sensitivity_data"] = "Simulated Sensitivity Data from sandbox"
 
-        return {KEY_PRIMARY_ARTIFACT: artifact}
+        output_data = {KEY_PRIMARY_ARTIFACT: artifact}
+        return ExecutionResult(output_data=output_data, artifacts=artifacts)
 
-    async def _execute_sca(self, node: NodeInstance, inputs: Dict[str, Any], feedback: Optional[str]) -> Dict[str, Any]:
+    async def _execute_sca(
+        self, node: NodeInstance, inputs: Dict[str, Any], feedback: Optional[str]
+    ) -> ExecutionResult:
         output: Dict[str, Any] = {}
         base_candidates: List[Dict[str, Any]] = []
 
@@ -128,7 +145,8 @@ class NodeExecutor:
 
         output[KEY_CANDIDATES] = final_candidates
         output[KEY_ANALYSIS] = analysis
-        return output
+        artifacts = {"analysis_prompt": analysis_prompt}
+        return ExecutionResult(output_data=output, artifacts=artifacts)
 
     def _generate_narrative_candidates(self) -> List[Dict[str, Any]]:
         # Static simulation, no LLM call needed to produce the options.
@@ -185,7 +203,7 @@ class NodeExecutor:
         feedback: Optional[str],
         previous_output: Optional[Dict[str, Any]],
         adjudication_data: Optional[List[Dict[str, Any]]],
-    ) -> Dict[str, Any]:
+    ) -> ExecutionResult:
         if adjudication_data or feedback:
             context = adjudication_data if adjudication_data else feedback
             previous_artifact_content = "N/A"
@@ -220,10 +238,12 @@ class NodeExecutor:
             artifact["execution_blueprint"] = f"Blueprint for {selected_model_name}."
 
         critiques = await self._critique(node, artifact, adjudication_data)
-        return {
+        output_data = {
             KEY_PRIMARY_ARTIFACT: artifact,
             KEY_CRITIQUES: critiques,
         }
+        artifacts = {"generation_prompt": prompt}
+        return ExecutionResult(output_data=output_data, artifacts=artifacts)
 
     async def _critique(
         self,

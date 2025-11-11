@@ -3,12 +3,20 @@ import traceback
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
+from arq.jobs import Job
+from arq.jobs import NotFoundError as ArqNotFoundError
 from loguru import logger
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from backend.config import settings
-from backend.exceptions import DependencyException, ForbiddenException, InvalidStateException, NotFoundException
+from backend.exceptions import (
+    DependencyException,
+    ForbiddenException,
+    InvalidStateException,
+    NotFoundException,
+    WorkflowException,
+)
 from backend.models.project import FileRole, ProjectFile
 from backend.models.user import User
 from backend.models.workflow import (
@@ -31,7 +39,7 @@ from backend.schemas.node import (
     TemporaryExecutionRead,
 )
 from backend.services.execution_engine.config_resolver import resolve_config
-from backend.services.execution_engine.executor import NodeExecutor
+from backend.services.execution_engine.executor import ExecutionResult, NodeExecutor
 from backend.services.storage_service import storage_service
 from backend.task_names import TASK_EXECUTE_NODE
 from backend.utils.event_utils import broadcast_event
@@ -64,15 +72,29 @@ class NodeService:
     async def _enqueue_job(self, node_id: int, **kwargs) -> NodeInstance:
         """Internal helper to enqueue a worker job and update node state."""
         redis = await get_redis_pool()
-        await redis.enqueue_job(TASK_EXECUTE_NODE, node_id=node_id, **kwargs)
+        job_key = f"executing_node:{node_id}"
+
+        try:
+            job = await redis.enqueue_job(TASK_EXECUTE_NODE, node_id=node_id, _job_id=job_key, **kwargs)
+            logger.info("Enqueued job {job_id} (Key: {job_key}) for node {node_id}", job_id=job.job_id, job_key=job_key, node_id=node_id)
+        except Exception as exc:
+            logger.error(
+                "Failed to enqueue job for node {node_id}. A job might already be running.",
+                node_id=node_id,
+                error=str(exc),
+            )
+            raise InvalidStateException(
+                f"Failed to start execution for node {node_id}. An execution might already be in progress."
+            ) from exc
 
         node = self.get_node_instance(node_id)
-        node.status = NodeStatus.EXECUTING
-        node.current_stage = ExecutionStage.INITIALIZING
-        self.db.commit()
-        self.db.refresh(node)
-        await self._broadcast_node_update(node)
-        logger.info("Enqueued job for node", node_id=node_id, job_args=kwargs)
+        if node.status != NodeStatus.EXECUTING:
+            node.status = NodeStatus.EXECUTING
+            node.current_stage = ExecutionStage.INITIALIZING
+            self.db.commit()
+            self.db.refresh(node)
+            await self._broadcast_node_update(node)
+
         return node
 
     async def enqueue_initial_execution(self, node_id: int, user: User) -> NodeInstance:
@@ -126,11 +148,11 @@ class NodeService:
     async def enqueue_retry(
         self, node_id: int, user: User, user_feedback: Optional[str] = None
     ) -> NodeInstance:
-        """Retry a failed node, with an ownership check."""
+        """Retry a failed or canceled node, with an ownership check."""
         node = self.get_node_instance(node_id, user=user)
-        if node.status != NodeStatus.FAILED:
+        if node.status not in [NodeStatus.FAILED, NodeStatus.CANCELED]:
             raise InvalidStateException(
-                f"Node must be 'Failed' to retry; current status is '{node.status.value}'.",
+                f"Node must be 'Failed' or 'Canceled' to retry; current status is '{node.status.value}'.",
                 details={"node_id": node.id, "current_status": node.status.value},
             )
         self._validate_execution_request(
@@ -165,10 +187,9 @@ class NodeService:
         self._validate_execution_request(node, user_feedback, is_retry, None, adjudication_data)
 
         previous_status = node.status.value
-        redis = await get_redis_pool()
-        await redis.enqueue_job(
-            TASK_EXECUTE_NODE,
-            node_id=node_id,
+
+        return await self._enqueue_job(
+            node_id,
             user_feedback=user_feedback,
             is_retry_from_hitl=is_retry,
             base_version_id=None,
@@ -176,13 +197,48 @@ class NodeService:
             previous_status=previous_status,
         )
 
-        node.status = NodeStatus.EXECUTING
-        node.current_stage = ExecutionStage.PROCESSING
-        self.db.commit()
-        self.db.refresh(node)
-        await self._broadcast_node_update(node)
-        logger.info("Enqueued HITL continuation for node", node_id=node_id)
-        return node
+    async def cancel_execution(self, node_id: int, user: User) -> Dict[str, str]:
+        """Attempt to cancel an ongoing execution for a node."""
+        node = self.get_node_instance(node_id, user=user)
+
+        if node.status != NodeStatus.EXECUTING:
+            raise InvalidStateException(f"Node is not currently executing. Status: {node.status.value}")
+
+        redis = await get_redis_pool()
+        job_key = f"executing_node:{node_id}"
+        job = Job(job_key, redis)
+
+        try:
+            aborted = await job.abort()
+            if aborted:
+                logger.info("Cancellation signal sent for job {job_key}", job_key=job_key)
+                return {"message": "Cancellation request sent. The node will transition to 'Canceled' shortly."}
+
+            logger.warning("Could not send cancellation signal for job {job_key}.", job_key=job_key)
+            self.db.refresh(node)
+            if node.status != NodeStatus.EXECUTING:
+                return {
+                    "message": f"Execution could not be cancelled as it already completed or failed. Current status: {node.status.value}"
+                }
+            raise WorkflowException("Failed to cancel execution. The task might be unresponsive.", status_code=500)
+        except ArqNotFoundError:
+            logger.warning("Job {job_key} not found in Redis during cancellation attempt.", job_key=job_key)
+            self.db.refresh(node)
+            if node.status == NodeStatus.EXECUTING:
+                logger.error("Inconsistent state detected for Node {node_id}. Forcing status correction.", node_id=node_id)
+                node.status = NodeStatus.FAILED
+                node.current_stage = ExecutionStage.FAILED
+                if node.temporary_result:
+                    node.temporary_result.error_log = (
+                        "Execution state inconsistent (Job lost). Automatically marked as failed."
+                    )
+                self.db.commit()
+                await self._broadcast_node_update(node)
+                return {"message": "Execution not found, but node status was inconsistent. Marked as Failed."}
+            return {"message": f"Execution not found. Current status: {node.status.value}"}
+        except Exception as exc:
+            logger.exception("An unexpected error occurred during cancellation attempt for Node {node_id}.", node_id=node_id)
+            raise WorkflowException(f"An error occurred during cancellation: {exc}", status_code=500) from exc
 
     async def execute_in_worker(
         self,
@@ -248,7 +304,7 @@ class NodeService:
             self.db.commit()
             await self._broadcast_node_update(node)
 
-            execution_output = await executor.execute_node(
+            execution_result: ExecutionResult = await executor.execute_node(
                 node,
                 resolved_inputs,
                 previous_hitl_history,
@@ -261,7 +317,8 @@ class NodeService:
             self.db.commit()
             await self._broadcast_node_update(node)
 
-            temp_result.output_data = execution_output
+            temp_result.output_data = execution_result.output_data
+            temp_result.execution_artifacts = execution_result.artifacts
             temp_result.error_log = None
             node.status = NodeStatus.AWAITING_HITL_APPROVAL
             node.current_stage = ExecutionStage.AWAITING_REVIEW
@@ -357,6 +414,7 @@ class NodeService:
             node_instance_id=node.id,
             input_dependencies=input_map,
             accumulated_hitl_interactions=interactions,
+            execution_artifacts={},
             llm_model_name=settings.LLM_MODEL_NAME,
             temperature=settings.DEFAULT_TEMPERATURE,
         )
@@ -696,6 +754,7 @@ class NodeService:
                 based_on_version_id=base_version.id,
                 output_data=submission.edited_output_data,
                 raw_generated_output=base_version.raw_generated_output,
+                execution_artifacts=base_version.execution_artifacts,
                 input_dependencies=base_version.input_dependencies,
                 hitl_history=history,
                 llm_model_name=base_version.llm_model_name,
@@ -723,6 +782,7 @@ class NodeService:
         next_node: Optional[NodeInstance] = None
         structure_changed = False
         workflow_completed = False
+        old_version_id = node.active_version_id
 
         try:
             node.active_version_id = new_version.id
@@ -754,13 +814,15 @@ class NodeService:
 
         self.db.refresh(node)
         await self._broadcast_node_update(node)
+        if old_version_id != new_version.id:
+            await self._broadcast_version_change(node)
 
         if structure_changed:
             await workflow_service.broadcast_structure_update(node.workflow_instance_id)
 
         if workflow_completed:
-            workflow = workflow_service.get_workflow_instance(node.workflow_instance_id, user=user)
-            await workflow_service._broadcast_workflow_update(workflow)
+            workflow_read = workflow_service.get_workflow_instance(node.workflow_instance_id, user=user)
+            await workflow_service._broadcast_workflow_update(workflow_read)
 
         if next_node and next_node.status == NodeStatus.NOT_STARTED:
             await self.enqueue_initial_execution(next_node.id, user=user)
@@ -822,6 +884,7 @@ class NodeService:
         if status_changed:
             await self._broadcast_node_update(node)
 
+        await self._broadcast_version_change(node)
         return node
 
     async def _broadcast_node_update(self, node: NodeInstance):
@@ -829,6 +892,16 @@ class NodeService:
 
         node_data = NodeInstanceRead.model_validate(node).model_dump(mode="json")
         await broadcast_event(node.workflow_instance_id, EventType.NODE_STATUS_UPDATED, node_data, node_id=node.id)
+
+    async def _broadcast_version_change(self, node: NodeInstance):
+        """Broadcasts that the active version has changed."""
+        node_data = NodeInstanceRead.model_validate(node).model_dump(mode="json")
+        await broadcast_event(
+            node.workflow_instance_id,
+            EventType.NODE_ACTIVE_VERSION_CHANGED,
+            node_data,
+            node_id=node.id,
+        )
 
     def get_versions(self, node_id: int, user: User) -> List[NodeVersion]:
         """Get all versions for a node, with an ownership check."""

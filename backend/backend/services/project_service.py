@@ -13,6 +13,7 @@ from backend.exceptions import DependencyException, ForbiddenException, InvalidS
 from backend.models.project import FileRole, HistoricalProblem, Project, ProjectFile, ProjectStatus, ProblemType
 from backend.models.user import User
 from backend.models.workflow import NodeInstance, WorkflowInstance
+from backend.repositories import ProjectRepository
 from backend.schemas.project import ProjectCreate, ProjectUpdate
 from backend.services.storage_service import storage_service
 from backend.services.user_service import UserService
@@ -34,10 +35,11 @@ class ProjectService:
         self.db = db
         self.user_service = user_service or UserService()
         self.workflow_service = workflow_service or WorkflowService(db)
+        self.project_repo = ProjectRepository(db)
 
     def _get_project_for_user(self, project_id: int, user: User) -> Project:
         """Retrieve a project and enforce ownership."""
-        project = self.db.query(Project).get(project_id)
+        project = self.project_repo.get(project_id)
         if not project:
             raise NotFoundException(f"Project with id {project_id} not found.")
         if project.user_id != user.id:
@@ -46,11 +48,7 @@ class ProjectService:
 
     def create_project(self, project_data: ProjectCreate, user: User) -> Project:
         """Create a new project for the given user."""
-        existing_project = (
-            self.db.query(Project)
-            .filter(Project.user_id == user.id, Project.name == project_data.name)
-            .first()
-        )
+        existing_project = self.project_repo.find_by_name_for_user(project_data.name, user)
         if existing_project:
             raise InvalidStateException(
                 f"Project with name '{project_data.name}' already exists.",
@@ -71,14 +69,16 @@ class ProjectService:
 
     def get_projects_paginated(self, user: User, skip: int, limit: int) -> Tuple[int, List[Project]]:
         """Return a user's projects along with a total count for pagination."""
-        query = self.db.query(Project).filter(Project.user_id == user.id)
-        total = query.count()
-        items = query.order_by(Project.updated_at.desc()).offset(skip).limit(limit).all()
-        return total, items
+        return self.project_repo.list_paginated_for_user(user, skip, limit)
 
     def get_project_details(self, project_id: int, user: User) -> Project:
         """Return project details after verifying ownership."""
-        return self._get_project_for_user(project_id, user)
+        project = self.project_repo.get_with_details(project_id)
+        if not project:
+            raise NotFoundException(f"Project with id {project_id} not found.")
+        if project.user_id != user.id:
+            raise ForbiddenException("You do not have permission to access this project.")
+        return project
 
     def update_project(self, project_id: int, update_data: ProjectUpdate, user: User) -> Project:
         """Update mutable project fields."""
@@ -93,15 +93,24 @@ class ProjectService:
 
     def delete_project(self, project_id: int, user: User) -> None:
         """Delete a project and its stored files."""
-        project = self._get_project_for_user(project_id, user)
+        project = self.project_repo.get_with_details(project_id)
+        if not project:
+            raise NotFoundException(f"Project with id {project_id} not found.")
+        if project.user_id != user.id:
+            raise ForbiddenException("You do not have permission to access this project.")
+
         files_to_delete = list(project.files)
+        try:
+            for file_record in files_to_delete:
+                storage_service.delete_file(file_record.storage_path)
+            logger.info("Deleted stored files for project {}", project_id)
+        except Exception as exc:
+            logger.exception("Failed to delete stored files for project {}, aborting.", project_id)
+            raise DependencyException(f"Could not delete associated files for project {project_id}") from exc
 
         self.db.delete(project)
         self.db.commit()
         logger.info("Deleted project {} from database for user {}", project_id, user.id)
-
-        for file_record in files_to_delete:
-            storage_service.delete_file(file_record.storage_path)
 
     async def upload_file(self, project_id: int, user: User, file: UploadFile, role: FileRole) -> ProjectFile:
         """Upload and associate a file with the project."""

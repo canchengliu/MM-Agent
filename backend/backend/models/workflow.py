@@ -65,6 +65,7 @@ class NodeStatus(str, Enum):
     AWAITING_HITL_APPROVAL = "Awaiting HITL Approval"
     COMPLETED = "Completed"
     FAILED = "Failed"
+    CANCELED = "Canceled"
 
 
 class ExecutionStage(str, Enum):
@@ -77,6 +78,7 @@ class ExecutionStage(str, Enum):
     AWAITING_REVIEW = "Awaiting Review"
     COMPLETED = "Completed"
     FAILED = "Failed"
+    CANCELED = "Canceled"
 
 
 class NodeInstance(Base):
@@ -137,6 +139,7 @@ class NodeVersion(Base):
     based_on_version_id = Column(Integer, ForeignKey("node_versions.id"), nullable=True)
     output_data = Column(MutableDict.as_mutable(JSON), nullable=True)
     raw_generated_output = Column(MutableDict.as_mutable(JSON), nullable=True)
+    execution_artifacts = Column(MutableDict.as_mutable(JSON), nullable=True)
     # Stores Dict[int, int] (NodeID -> VersionID); MutableDict preserves integer keys.
     input_dependencies = Column(MutableDict.as_mutable(JSON), nullable=False)
     hitl_history = Column(MutableList.as_mutable(JSON), nullable=False)
@@ -156,6 +159,7 @@ class TemporaryExecutionResult(Base):
     id = Column(Integer, primary_key=True, index=True)
     node_instance_id = Column(Integer, ForeignKey("node_instances.id"), unique=True, nullable=False)
     output_data = Column(MutableDict.as_mutable(JSON), nullable=True)
+    execution_artifacts = Column(MutableDict.as_mutable(JSON), nullable=True)
     # Stores Dict[int, int] for live execution context.
     input_dependencies = Column(MutableDict.as_mutable(JSON), nullable=False)
     accumulated_hitl_interactions = Column(MutableList.as_mutable(JSON), nullable=False)

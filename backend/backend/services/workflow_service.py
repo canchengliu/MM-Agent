@@ -11,7 +11,6 @@ from backend.schemas.common import PaginatedResponse
 from backend.schemas.events import EventType
 from backend.schemas.node import StalenessInfo
 from backend.schemas.workflow import WorkflowCreate, WorkflowInstanceRead, WorkflowUpdate
-from backend.services.node_service import NodeService
 from backend.utils.event_utils import broadcast_event
 from backend.workflow_definition import (
     PHASE_2_TEMPLATE,
@@ -67,25 +66,67 @@ class WorkflowService:
             raise ForbiddenException("You do not have permission to access this workflow.")
         return workflow
 
+    def _calculate_staleness_flags(self, workflow: WorkflowInstance) -> Dict[int, bool]:
+        """Calculates the boolean staleness flag for all nodes in the workflow."""
+        if not workflow.nodes:
+            return {}
+
+        nodes = workflow.nodes
+        active_version_map: Dict[int, Optional[int]] = {node.id: node.active_version_id for node in nodes}
+        staleness_flags: Dict[int, bool] = {}
+
+        for node in nodes:
+            is_stale = False
+            if node.status == NodeStatus.COMPLETED and node.active_version:
+                input_dependencies = node.active_version.input_dependencies or {}
+                for upstream_node_id, consumed_version_id in input_dependencies.items():
+                    current_active_version_id = active_version_map.get(upstream_node_id)
+                    if current_active_version_id != consumed_version_id:
+                        is_stale = True
+                        break
+            staleness_flags[node.id] = is_stale
+
+        return staleness_flags
+
     def get_workflows_paginated(
         self, user: User, skip: int, limit: int
     ) -> PaginatedResponse[WorkflowInstanceRead]:
-        """Return a user's workflows ordered by creation date with pagination."""
+        """Return a user's workflows ordered by creation date with pagination and staleness info."""
         query = self.db.query(WorkflowInstance).filter(WorkflowInstance.user_id == user.id)
         total = query.count()
         workflows = (
-            query.options(joinedload(WorkflowInstance.nodes))
+            query.options(joinedload(WorkflowInstance.nodes).joinedload(NodeInstance.active_version))
             .order_by(WorkflowInstance.created_at.desc())
             .offset(skip)
             .limit(limit)
             .all()
         )
-        serialized = [WorkflowInstanceRead.model_validate(workflow) for workflow in workflows]
-        return PaginatedResponse(total=total, items=serialized)
+        serialized_items: List[WorkflowInstanceRead] = []
+        for workflow in workflows:
+            staleness_flags = self._calculate_staleness_flags(workflow)
+            serialized = WorkflowInstanceRead.model_validate(workflow)
+            for node_read in serialized.nodes:
+                node_read.is_stale = staleness_flags.get(node_read.id, False)
+            serialized_items.append(serialized)
+        return PaginatedResponse(total=total, items=serialized_items)
 
-    def get_workflow_instance(self, workflow_id: int, user: User) -> WorkflowInstance:
-        """Get a workflow instance with ownership check."""
-        return self._get_workflow_for_user(workflow_id, user)
+    def get_workflow_instance(self, workflow_id: int, user: User) -> WorkflowInstanceRead:
+        """Get a workflow instance with ownership check and staleness calculation."""
+        workflow = (
+            self.db.query(WorkflowInstance)
+            .options(joinedload(WorkflowInstance.nodes).joinedload(NodeInstance.active_version))
+            .get(workflow_id)
+        )
+        if not workflow:
+            raise NotFoundException(f"WorkflowInstance {workflow_id} not found.")
+        if workflow.user_id != user.id:
+            raise ForbiddenException("You do not have permission to access this workflow.")
+
+        staleness_flags = self._calculate_staleness_flags(workflow)
+        workflow_read = WorkflowInstanceRead.model_validate(workflow)
+        for node_read in workflow_read.nodes:
+            node_read.is_stale = staleness_flags.get(node_read.id, False)
+        return workflow_read
 
     def create_workflow(self, create_data: WorkflowCreate, user: User) -> WorkflowInstance:
         project = self.db.query(Project).get(create_data.project_id)
@@ -149,6 +190,7 @@ class WorkflowService:
 
     async def start_workflow(self, workflow_id: int, user: User) -> NodeInstance:
         """Starts or resumes a workflow, with an ownership check."""
+        from backend.services.node_service import NodeService
         workflow = self._get_workflow_for_user(workflow_id, user)
         first_node = (
             self.db.query(NodeInstance)
@@ -163,7 +205,7 @@ class WorkflowService:
         if workflow.status != WorkflowStatus.RUNNING:
             workflow.status = WorkflowStatus.RUNNING
             self.db.commit()
-            await self._broadcast_workflow_update(workflow)
+            await self._broadcast_workflow_update(self.get_workflow_instance(workflow_id, user))
 
         node_service = NodeService(self.db)
         return await node_service.enqueue_initial_execution(first_node.id, user)
@@ -373,9 +415,15 @@ class WorkflowService:
             workflow_data = WorkflowInstanceRead.model_validate(workflow).model_dump(mode="json")
             await broadcast_event(workflow_id, EventType.WORKFLOW_STRUCTURE_UPDATED, workflow_data)
 
-    async def _broadcast_workflow_update(self, workflow: WorkflowInstance):
-        if not workflow.nodes:
-            self.db.refresh(workflow, ["nodes"])
+    async def _broadcast_workflow_update(self, workflow_data: WorkflowInstanceRead | WorkflowInstance):
+        if isinstance(workflow_data, WorkflowInstance):
+            logger.warning("Broadcasting workflow update from ORM object. Staleness data might be missing.")
+            if not workflow_data.nodes:
+                self.db.refresh(workflow_data, ["nodes"])
+            serialized_data = WorkflowInstanceRead.model_validate(workflow_data).model_dump(mode="json")
+            workflow_id = workflow_data.id
+        else:
+            serialized_data = workflow_data.model_dump(mode="json")
+            workflow_id = workflow_data.id
 
-        workflow_data = WorkflowInstanceRead.model_validate(workflow).model_dump(mode="json")
-        await broadcast_event(workflow.id, EventType.WORKFLOW_STATUS_UPDATED, workflow_data)
+        await broadcast_event(workflow_id, EventType.WORKFLOW_STATUS_UPDATED, serialized_data)

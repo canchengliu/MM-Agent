@@ -7,10 +7,12 @@ import hashlib
 import hmac
 import secrets
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Optional, Union
 
 from cryptography.fernet import Fernet
-from jose import jwt
+from fastapi import HTTPException, status
+from jose import ExpiredSignatureError, JWTError, jwt
 
 from backend.config import settings
 
@@ -19,6 +21,14 @@ PASSWORD_ITERATIONS = 390_000
 PASSWORD_SALT_BYTES = 16
 
 _fernet = Fernet(settings.ENCRYPTION_KEY)
+
+
+class TokenType(str, Enum):
+    """Defines the purpose of a JWT token."""
+
+    ACCESS = "access"
+    EMAIL_VERIFICATION = "email_verification"
+    PASSWORD_RESET = "password_reset"
 
 
 def _encode_bytes(raw: bytes) -> str:
@@ -91,13 +101,48 @@ def decrypt_data(value: Optional[Union[str, bytes]]) -> Optional[str]:
     return plaintext.decode("utf-8")
 
 
-def create_access_token(data: dict) -> str:
-    """Create a signed JWT access token."""
+def create_token(data: dict, token_type: TokenType, expires_delta: Optional[timedelta] = None) -> str:
+    """Create a signed JWT token for various purposes."""
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        if token_type == TokenType.ACCESS:
+            expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        elif token_type == TokenType.EMAIL_VERIFICATION:
+            expire = datetime.utcnow() + timedelta(hours=24)
+        elif token_type == TokenType.PASSWORD_RESET:
+            expire = datetime.utcnow() + timedelta(minutes=15)
+        else:
+            raise ValueError("Unsupported token type")
+
+    to_encode.update({"exp": expire, "type": token_type.value})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
+
+
+def decode_token(token: str, expected_type: TokenType) -> dict:
+    """Decode and validate a JWT token, ensuring it matches the expected type."""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("type") != expected_type.value:
+            raise JWTError("Invalid token type")
+        return payload
+    except ExpiredSignatureError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired",
+        ) from exc
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Could not validate token: {exc}",
+        ) from exc
+
+
+def create_access_token(data: dict) -> str:
+    """Create a signed JWT access token."""
+    return create_token(data, TokenType.ACCESS)
 
 
 __all__ = [
@@ -106,4 +151,7 @@ __all__ = [
     "get_password_hash",
     "verify_password",
     "create_access_token",
+    "create_token",
+    "decode_token",
+    "TokenType",
 ]

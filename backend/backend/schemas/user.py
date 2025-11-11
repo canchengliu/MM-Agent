@@ -7,6 +7,13 @@ from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 from backend.models.user import HITLProfile, InterfaceTheme, SupportedLanguage, ThinkingDepth
 
 
+def _validate_password_strength(value: str) -> str:
+    """Enforce minimum password requirements per FRS 1.1."""
+    if len(value) < 8:
+        raise ValueError("Password must be at least 8 characters long.")
+    return value
+
+
 class UserCreate(BaseModel):
     """Schema for creating a new user."""
 
@@ -17,10 +24,19 @@ class UserCreate(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password_strength(cls, value: str) -> str:
-        """Enforce minimum password requirements per FRS 1.1."""
-        if len(value) < 8:
-            raise ValueError("Password must be at least 8 characters long.")
-        return value
+        return _validate_password_strength(value)
+
+
+class PasswordChange(BaseModel):
+    """Schema for changing the user's password."""
+
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, value: str) -> str:
+        return _validate_password_strength(value)
 
 
 class UserSettingsUpdate(BaseModel):

@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 
 class Token(BaseModel):
@@ -18,3 +18,14 @@ class TokenData(BaseModel):
     # The 'sub' (subject) claim will hold the user ID.
     sub: Optional[str] = None
 
+
+class EmailVerificationRequest(BaseModel):
+    """Schema for verifying email."""
+
+    token: str
+
+
+class ResendVerificationRequest(BaseModel):
+    """Schema for requesting a new verification email."""
+
+    email: EmailStr

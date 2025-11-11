@@ -17,32 +17,26 @@ class Settings(BaseSettings):
     # --- Core Application Settings ---
     DATABASE_URL: str
     REDIS_SCHEME: str = "redis"
-    REDIS_HOST: str = "10.120.16.27"
-    REDIS_PORT: int = 7379
-    REDIS_DB: int = 0
+    # Redis settings are now loaded from the .env file instead of being hardcoded.
+    REDIS_HOST: str
+    REDIS_PORT: int
+    REDIS_DB: int
     REDIS_USERNAME: str | None = None
-    REDIS_PASSWORD: str = 'another_secure_password'
-    REDIS_URL: RedisDsn = "redis://:another_secure_password@10.120.16.27:7379/0 "
+    REDIS_PASSWORD: str | None = None
+    # REDIS_URL will be assembled by the model_validator below if not provided directly.
+    REDIS_URL: RedisDsn | None = None
 
     # --- Logging ---
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "console"  # Use "json" for structured logs
 
     # --- Security and Authentication (R1, R7.3) ---
-    SECRET_KEY: str = "a_very_insecure_default_secret_key_for_jwt"
-    ENCRYPTION_KEY: str = "R2JofR3Im5x4f8IinLcs3jJ5Hh2R90g6Z_u-d23o1oQ="  # Insecure default
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
-
-    @field_validator("SECRET_KEY")
-    @classmethod
-    def validate_secret_key(cls, v: str) -> str:
-        if v == "a_very_insecure_default_secret_key_for_jwt":
-            print(  # Use print as logger might not be configured yet
-                "WARNING: Using default insecure SECRET_KEY. "
-                "Please set a strong, random key in your environment for production."
-            )
-        return v
+    # Security settings are now loaded from the .env file.
+    SECRET_KEY: str
+    ENCRYPTION_KEY: str = "R2JofR3Im5x4f8IinLcs3jJ5Hh2R90g6Z_u-d23o1oQ="  # Default for dev if not in .env
+    # Use alias to match JWT_ALGORITHM in .env file
+    ALGORITHM: str = Field(default="HS256", alias="JWT_ALGORITHM")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int
 
     @field_validator("ENCRYPTION_KEY")
     @classmethod
@@ -65,9 +59,11 @@ class Settings(BaseSettings):
         REDIS_* fields inside their environment (including .env files).
         """
 
-        if "REDIS_URL" in self.model_fields_set:
+        # If REDIS_URL is explicitly set in the environment, use it.
+        if self.REDIS_URL and "REDIS_URL" in self.model_fields_set:
             return self
 
+        # Otherwise, build it from the component parts.
         path = str(self.REDIS_DB or 0)
         built_url = RedisDsn.build(
             scheme=self.REDIS_SCHEME,
@@ -78,7 +74,8 @@ class Settings(BaseSettings):
             path=path,
         )
 
-        # object.__setattr__(self, "REDIS_URL", RedisDsn(built_url))
+        # Set the assembled URL on the settings object.
+        self.REDIS_URL = built_url
         return self
 
     @model_validator(mode="after")
@@ -108,6 +105,8 @@ class Settings(BaseSettings):
     WEBSOCKET_BROADCAST_CHANNEL: str = "workflow_events"
 
     # --- Legacy/Temporary Settings (to be refactored) ---
+    # These settings correctly use aliases to load from the .env file,
+    # overriding the defaults if present.
     EXTERNAL_DATA_DIR: str = str(BASE_DIR / "external_data_simulation")
     LLM_MODEL_NAME: str = Field(
         default="Qwen/Qwen3-VL-8B-Instruct",

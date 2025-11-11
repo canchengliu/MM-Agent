@@ -8,10 +8,16 @@ from typing import Optional
 from loguru import logger
 from sqlalchemy.orm import Session
 
-from backend.auth.security import get_password_hash, verify_password
-from backend.exceptions import InvalidStateException
+from backend.auth.security import (
+    TokenType,
+    create_token,
+    decode_token,
+    get_password_hash,
+    verify_password,
+)
+from backend.exceptions import ForbiddenException, InvalidStateException, WorkflowException
 from backend.models.user import User, UserSettings
-from backend.schemas.user import UserCreate
+from backend.schemas.user import PasswordChange, UserCreate
 
 
 class AuthService:
@@ -77,19 +83,63 @@ class AuthService:
             db.commit()
             db.refresh(new_user)
             logger.info("New user registered successfully", user_id=new_user.id, email=new_user.email)
+            self.send_verification_email(db, new_user)
             return new_user
         except Exception:
             db.rollback()
             logger.exception("Failed to register new user. Transaction rolled back.", email=user_in.email)
             raise
+    def change_password(self, db: Session, user: User, password_change: PasswordChange) -> None:
+        """Change the password for an authenticated user."""
+        if not verify_password(password_change.current_password, user.hashed_password):
+            raise ForbiddenException("Incorrect current password.")
 
-    def verify_email(self) -> None:
-        """
-        (STUB) Business logic for handling email verification.
-        This would typically involve validating a token sent to the user's email.
-        """
-        logger.warning("STUB: Email verification logic is not implemented.")
-        pass
+        new_hashed_password = get_password_hash(password_change.new_password)
+        user.hashed_password = new_hashed_password
+        db.commit()
+        logger.info("Password changed successfully for user {}", user.id)
+
+    def send_verification_email(self, db: Session, user: User) -> None:
+        """Generate a verification token and simulate sending an email."""
+        if user.is_verified:
+            return
+
+        token = create_token(data={"sub": str(user.id)}, token_type=TokenType.EMAIL_VERIFICATION)
+        logger.info("SIMULATION: Sending verification email to {}", user.email)
+        print(f"SIMULATION: Verification Token for {user.email}: {token}")
+
+    def handle_resend_verification(self, db: Session, email: str) -> None:
+        """Handles the request to resend verification."""
+        user = self.get_user_by_email(db, email)
+        if user:
+            self.send_verification_email(db, user)
+        else:
+            logger.info("Resend verification requested for unknown email: {}", email)
+
+    def verify_email(self, db: Session, token: str) -> User:
+        """Verify the user's email using the provided token."""
+        payload = decode_token(token, TokenType.EMAIL_VERIFICATION)
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            raise WorkflowException("Invalid token payload.", status_code=400)
+
+        try:
+            user_id = int(user_id_str)
+        except ValueError as exc:
+            raise WorkflowException("Invalid user ID in token.", status_code=400) from exc
+
+        user = db.get(User, user_id)
+        if not user:
+            raise WorkflowException("User not found.", status_code=404)
+
+        if user.is_verified:
+            return user
+
+        user.is_verified = True
+        db.commit()
+        db.refresh(user)
+        logger.info("Email verified successfully for user {}", user.id)
+        return user
 
     def reset_password(self) -> None:
         """
