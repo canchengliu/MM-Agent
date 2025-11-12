@@ -1,7 +1,10 @@
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
-import type { Option } from "../messages";
+interface Option {
+  text: string;
+  value: string;
+}
 
 // Tool Calls
 

@@ -19,7 +19,6 @@ import { cn } from "~/lib/utils";
 
 import Image from "./image";
 import { Tooltip } from "./tooltip";
-import { Link } from "./link";
 
 export function Markdown({
   className,
@@ -38,11 +37,17 @@ export function Markdown({
 }) {
   const components: ReactMarkdownOptions["components"] = useMemo(() => {
     return {
-      a: ({ href, children }) => (
-        <Link href={href} checkLinkCredibility={checkLinkCredibility}>
-          {children}
-        </Link>
-      ),
+      a: ({ href, children }) => {
+        const rel = checkLinkCredibility
+          ? "noopener noreferrer nofollow"
+          : "noopener noreferrer";
+        const link = (href as string | undefined) ?? "#";
+        return (
+          <a href={link} target="_blank" rel={rel}>
+            {children}
+          </a>
+        );
+      },
       img: ({ src, alt }) => (
         <a href={src as string} target="_blank" rel="noopener noreferrer">
           <Image className="rounded" src={src as string} alt={alt ?? ""} />

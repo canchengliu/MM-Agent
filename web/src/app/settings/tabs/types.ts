@@ -6,11 +6,15 @@ import type { FunctionComponent } from "react";
 
 import type { SettingsState } from "~/core/store";
 
-export type Tab = FunctionComponent<{
+type TabComponent = FunctionComponent<{
   settings: SettingsState;
   onChange: (changes: Partial<SettingsState>) => void;
-}> & {
-  displayName?: string;
-  icon?: LucideIcon;
+}>;
+
+export type Tab = {
+  id: string;
+  label: string;
+  icon: LucideIcon;
   badge?: string;
+  component: TabComponent;
 };
