@@ -56,6 +56,24 @@ class HistoricalInitializationRequest(BaseModel):
     historical_problem_id: int
 
 
+class HistoricalProblemRead(BaseModel):
+    """Schema for reading historical problem data from the library (R3.3)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    year: int
+    type: ProblemType
+    name: str
+    has_description: bool = Field(..., validation_alias="description_path")
+    has_dataset: bool = Field(..., validation_alias="dataset_path")
+
+    @field_validator("has_description", "has_dataset", mode="before")
+    @classmethod
+    def check_path_exists(cls, value):
+        return bool(value)
+
+
 class ProjectFileRead(BaseModel):
     """Schema for reading project file data."""
 

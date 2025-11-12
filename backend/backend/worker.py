@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import traceback
 from typing import Any, Dict
 
 from arq.connections import RedisSettings
-from arq.worker import AbortJob
 from loguru import logger
 from sqlalchemy.orm import joinedload
 
@@ -52,7 +52,7 @@ async def execute_node_task(ctx: Dict[str, Any], node_id: int, **kwargs: Any) ->
             node_service = NodeService(db)
             await node_service.execute_in_worker(node, **kwargs)
 
-        except AbortJob:
+        except asyncio.CancelledError:
             logger.warning("Worker task aborted (cancelled by user).")
             db.close()
             await handle_cancellation(node_id)

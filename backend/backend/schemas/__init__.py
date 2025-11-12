@@ -52,7 +52,7 @@ from backend.schemas.project import (
 from backend.schemas.user import UserCreate, UserRead, UserSettingsRead, UserSettingsUpdate
 
 # Workflow Schemas
-from backend.schemas.workflow import WorkflowCreate, WorkflowInstanceRead, WorkflowUpdate
+from backend.schemas.workflow import PhaseRead, StageRead, WorkflowCreate, WorkflowInstanceRead, WorkflowUpdate
 
 __all__ = [
     # Auth
@@ -96,4 +96,6 @@ __all__ = [
     "WorkflowCreate",
     "WorkflowUpdate",
     "WorkflowInstanceRead",
+    "PhaseRead",
+    "StageRead",
 ]

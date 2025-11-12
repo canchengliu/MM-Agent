@@ -1,10 +1,9 @@
 import datetime
 import traceback
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from arq.jobs import Job
-from arq.jobs import NotFoundError as ArqNotFoundError
+from arq.jobs import Job, JobStatus
 from loguru import logger
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
@@ -69,32 +68,95 @@ class NodeService:
             raise ForbiddenException("You do not have permission to access this node.")
         return node
 
-    async def _enqueue_job(self, node_id: int, **kwargs) -> NodeInstance:
-        """Internal helper to enqueue a worker job and update node state."""
+    async def _enqueue_job(self, node: NodeInstance, **kwargs) -> Job:
+        """Internal helper to enqueue a worker job. Assumes DB state is updated and committed."""
         redis = await get_redis_pool()
+        node_id = node.id
         job_key = f"executing_node:{node_id}"
 
         try:
             job = await redis.enqueue_job(TASK_EXECUTE_NODE, node_id=node_id, _job_id=job_key, **kwargs)
-            logger.info("Enqueued job {job_id} (Key: {job_key}) for node {node_id}", job_id=job.job_id, job_key=job_key, node_id=node_id)
+            logger.info(
+                "Enqueued job {job_id} (Key: {job_key}) for node {node_id}",
+                job_id=job.job_id,
+                job_key=job_key,
+                node_id=node_id,
+            )
+            return job
         except Exception as exc:
             logger.error(
-                "Failed to enqueue job for node {node_id}. A job might already be running.",
+                "Failed to enqueue job for node {node_id}. Job might already be running or queue unavailable.",
                 node_id=node_id,
                 error=str(exc),
             )
             raise InvalidStateException(
-                f"Failed to start execution for node {node_id}. An execution might already be in progress."
+                f"Failed to start execution for node {node_id}. An execution might already be in progress or the queue is unavailable."
             ) from exc
 
-        node = self.get_node_instance(node_id)
-        if node.status != NodeStatus.EXECUTING:
-            node.status = NodeStatus.EXECUTING
-            node.current_stage = ExecutionStage.INITIALIZING
-            self.db.commit()
-            self.db.refresh(node)
-            await self._broadcast_node_update(node)
+    async def _prepare_and_enqueue(
+        self,
+        node: NodeInstance,
+        validation_func: Callable[
+            [NodeInstance, Optional[str], bool, Optional[int], Optional[List[Dict[str, Any]]]],
+            None,
+        ],
+        user_feedback: Optional[str],
+        is_retry_from_hitl: bool,
+        base_version_id: Optional[int],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ) -> NodeInstance:
+        """Centralized logic for validation, status updates, broadcasting, and enqueueing."""
+        previous_status_enum = node.status
+        previous_stage = node.current_stage
+        previous_status_value = node.status.value
 
+        validation_func(node, user_feedback, is_retry_from_hitl, base_version_id, adjudication_data)
+
+        status_changed = False
+        if node.status != NodeStatus.EXECUTING:
+            try:
+                node.status = NodeStatus.EXECUTING
+                node.current_stage = ExecutionStage.INITIALIZING
+                self.db.commit()
+                self.db.refresh(node)
+                status_changed = True
+                await self._broadcast_node_update(node)
+            except Exception:
+                self.db.rollback()
+                logger.exception("Failed to update node status to EXECUTING before enqueueing.", node_id=node.id)
+                raise InvalidStateException("Failed to prepare node for execution due to database error.")
+
+        try:
+            await self._enqueue_job(
+                node,
+                user_feedback=user_feedback,
+                is_retry_from_hitl=is_retry_from_hitl,
+                base_version_id=base_version_id,
+                adjudication_data=adjudication_data,
+                previous_status=previous_status_value,
+            )
+        except InvalidStateException:
+            if status_changed:
+                logger.warning("Reverting node status due to enqueue failure.", node_id=node.id)
+                try:
+                    self.db.refresh(node)
+                    if node.status == NodeStatus.EXECUTING:
+                        node.status = previous_status_enum
+                        node.current_stage = previous_stage
+                        self.db.commit()
+                        await self._broadcast_node_update(node)
+                    else:
+                        logger.info(
+                            "Node status changed concurrently, skipping reversion.",
+                            node_id=node.id,
+                            current_status=node.status.value,
+                        )
+                except Exception:
+                    logger.exception(
+                        "CRITICAL: Failed to revert node status after enqueue failure. DB state may be inconsistent.",
+                        node_id=node.id,
+                    )
+            raise
         return node
 
     async def enqueue_initial_execution(self, node_id: int, user: User) -> NodeInstance:
@@ -105,14 +167,13 @@ class NodeService:
                 "Initial execution is only allowed for nodes that have not started.",
                 details={"node_id": node.id, "current_status": node.status.value},
             )
-        self._validate_execution_request(node, None, False, None, None)
-        return await self._enqueue_job(
-            node_id,
-            user_feedback=None,
-            is_retry_from_hitl=False,
-            base_version_id=None,
-            adjudication_data=None,
-            previous_status=node.status.value,
+        return await self._prepare_and_enqueue(
+            node,
+            self._validate_execution_request,
+            None,
+            False,
+            None,
+            None,
         )
 
     async def enqueue_re_execution(
@@ -129,20 +190,13 @@ class NodeService:
                 f"Node must be 'Completed' to re-execute; current status is '{node.status.value}'.",
                 details={"node_id": node.id, "current_status": node.status.value},
             )
-        self._validate_execution_request(
+        return await self._prepare_and_enqueue(
             node,
-            user_feedback=user_feedback,
-            is_retry_from_hitl=False,
-            base_version_id=base_version_id,
-            adjudication_data=None,
-        )
-        return await self._enqueue_job(
-            node_id,
-            user_feedback=user_feedback,
-            is_retry_from_hitl=False,
-            base_version_id=base_version_id,
-            adjudication_data=None,
-            previous_status=node.status.value,
+            self._validate_execution_request,
+            user_feedback,
+            False,
+            base_version_id,
+            None,
         )
 
     async def enqueue_retry(
@@ -155,20 +209,13 @@ class NodeService:
                 f"Node must be 'Failed' or 'Canceled' to retry; current status is '{node.status.value}'.",
                 details={"node_id": node.id, "current_status": node.status.value},
             )
-        self._validate_execution_request(
+        return await self._prepare_and_enqueue(
             node,
-            user_feedback=user_feedback,
-            is_retry_from_hitl=False,
-            base_version_id=None,
-            adjudication_data=None,
-        )
-        return await self._enqueue_job(
-            node_id,
-            user_feedback=user_feedback,
-            is_retry_from_hitl=False,
-            base_version_id=None,
-            adjudication_data=None,
-            previous_status=node.status.value,
+            self._validate_execution_request,
+            user_feedback,
+            False,
+            None,
+            None,
         )
 
     async def enqueue_hitl_action(
@@ -184,17 +231,13 @@ class NodeService:
             raise InvalidStateException(f"Cannot enqueue HITL action for node in status {node.status}")
 
         is_retry = bool(user_feedback)
-        self._validate_execution_request(node, user_feedback, is_retry, None, adjudication_data)
-
-        previous_status = node.status.value
-
-        return await self._enqueue_job(
-            node_id,
-            user_feedback=user_feedback,
-            is_retry_from_hitl=is_retry,
-            base_version_id=None,
-            adjudication_data=adjudication_data,
-            previous_status=previous_status,
+        return await self._prepare_and_enqueue(
+            node,
+            self._validate_execution_request,
+            user_feedback,
+            is_retry,
+            None,
+            adjudication_data,
         )
 
     async def cancel_execution(self, node_id: int, user: User) -> Dict[str, str]:
@@ -214,6 +257,25 @@ class NodeService:
                 logger.info("Cancellation signal sent for job {job_key}", job_key=job_key)
                 return {"message": "Cancellation request sent. The node will transition to 'Canceled' shortly."}
 
+            job_status = await job.status()
+            if job_status == JobStatus.not_found:
+                logger.warning("Job {job_key} not found in Redis during cancellation attempt.", job_key=job_key)
+                self.db.refresh(node)
+                if node.status == NodeStatus.EXECUTING:
+                    logger.error(
+                        "Inconsistent state detected for Node {node_id}. Forcing status correction.", node_id=node_id
+                    )
+                    node.status = NodeStatus.FAILED
+                    node.current_stage = ExecutionStage.FAILED
+                    if node.temporary_result:
+                        node.temporary_result.error_log = (
+                            "Execution state inconsistent (Job lost). Automatically marked as failed."
+                        )
+                    self.db.commit()
+                    await self._broadcast_node_update(node)
+                    return {"message": "Execution not found, but node status was inconsistent. Marked as Failed."}
+                return {"message": f"Execution not found. Current status: {node.status.value}"}
+
             logger.warning("Could not send cancellation signal for job {job_key}.", job_key=job_key)
             self.db.refresh(node)
             if node.status != NodeStatus.EXECUTING:
@@ -221,21 +283,6 @@ class NodeService:
                     "message": f"Execution could not be cancelled as it already completed or failed. Current status: {node.status.value}"
                 }
             raise WorkflowException("Failed to cancel execution. The task might be unresponsive.", status_code=500)
-        except ArqNotFoundError:
-            logger.warning("Job {job_key} not found in Redis during cancellation attempt.", job_key=job_key)
-            self.db.refresh(node)
-            if node.status == NodeStatus.EXECUTING:
-                logger.error("Inconsistent state detected for Node {node_id}. Forcing status correction.", node_id=node_id)
-                node.status = NodeStatus.FAILED
-                node.current_stage = ExecutionStage.FAILED
-                if node.temporary_result:
-                    node.temporary_result.error_log = (
-                        "Execution state inconsistent (Job lost). Automatically marked as failed."
-                    )
-                self.db.commit()
-                await self._broadcast_node_update(node)
-                return {"message": "Execution not found, but node status was inconsistent. Marked as Failed."}
-            return {"message": f"Execution not found. Current status: {node.status.value}"}
         except Exception as exc:
             logger.exception("An unexpected error occurred during cancellation attempt for Node {node_id}.", node_id=node_id)
             raise WorkflowException(f"An error occurred during cancellation: {exc}", status_code=500) from exc

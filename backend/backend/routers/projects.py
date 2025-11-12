@@ -1,6 +1,7 @@
 """API endpoints for project management, file uploads, and workflow initiation."""
 
 import re
+from typing import List
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
@@ -14,6 +15,7 @@ from backend.schemas.common import PaginatedResponse
 from backend.schemas.node import NodeInstanceRead
 from backend.schemas.project import (
     HistoricalInitializationRequest,
+    HistoricalProblemRead,
     ProjectCreate,
     ProjectDetailRead,
     ProjectFileRead,
@@ -23,6 +25,7 @@ from backend.schemas.project import (
 from backend.services.export_service import ExportService
 from backend.services.project_service import ProjectService
 
+library_router = APIRouter(prefix="/library", tags=["Problem Library"])
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
@@ -34,6 +37,15 @@ def get_project_service(db: Session = Depends(get_db)) -> ProjectService:
 def get_export_service(db: Session = Depends(get_db)) -> ExportService:
     """Dependency injector for the ExportService."""
     return ExportService(db)
+
+
+@library_router.get("/historical-problems", response_model=List[HistoricalProblemRead])
+def list_historical_problems(
+    service: ProjectService = Depends(get_project_service),
+) -> List[HistoricalProblemRead]:
+    """List all available historical problems from the library (R3.3)."""
+    problems = service.get_historical_problems()
+    return [HistoricalProblemRead.model_validate(problem) for problem in problems]
 
 
 @router.post("/", response_model=ProjectDetailRead, status_code=status.HTTP_201_CREATED)

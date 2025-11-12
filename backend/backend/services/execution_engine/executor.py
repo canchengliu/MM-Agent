@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from backend.models.user import ThinkingDepth
+from backend.models.user import HITLProfile, ThinkingDepth
 from backend.models.workflow import NodeInstance
 from backend.services.execution_engine.config_resolver import ExecutionConfig
 from backend.services.execution_engine.llm_client import LLMClient
@@ -251,7 +251,46 @@ class NodeExecutor:
         artifact: Dict[str, Any],
         adjudication_data: Optional[List[Dict[str, Any]]],
     ) -> List[Dict[str, Any]]:
-        # This part simulates the critique, it can remain as is.
+        profile = self.config.hitl_profile
+
+        if profile == HITLProfile.EXPERT:
+            if adjudication_data:
+                return []
+            return [
+                {
+                    KEY_ID: "c_exp_1",
+                    "critique": "Overall sound, but verify boundary conditions of the core assumption.",
+                    "severity": "Medium",
+                },
+            ]
+
+        if profile == HITLProfile.NOVICE:
+            if adjudication_data:
+                return [
+                    {
+                        KEY_ID: "c_nov_r1",
+                        "critique": "Refinement improved clarity, but introduced a minor ambiguity in terminology. Please review.",
+                        "severity": "Low",
+                    }
+                ]
+            return [
+                {
+                    KEY_ID: "c_nov_1",
+                    "critique": "The primary assumption lacks empirical justification. Consider alternative data sources.",
+                    "severity": "High",
+                },
+                {
+                    KEY_ID: "c_nov_2",
+                    "critique": "Key terminology is used ambiguously. Define all central concepts clearly.",
+                    "severity": "Medium",
+                },
+                {
+                    KEY_ID: "c_nov_3",
+                    "critique": "The scope appears overly broad. Narrow the focus for better analysis.",
+                    "severity": "Medium",
+                },
+            ]
+
         if adjudication_data:
             return [
                 {

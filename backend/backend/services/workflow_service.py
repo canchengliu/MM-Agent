@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Set
 
 from loguru import logger
@@ -9,10 +10,18 @@ from backend.models.user import User
 from backend.models.workflow import ExecutionStage, NodeInstance, NodeStatus, WorkflowInstance, WorkflowStatus
 from backend.schemas.common import PaginatedResponse
 from backend.schemas.events import EventType
-from backend.schemas.node import StalenessInfo
-from backend.schemas.workflow import WorkflowCreate, WorkflowInstanceRead, WorkflowUpdate
+from backend.schemas.node import NodeInstanceRead, StalenessInfo
+from backend.schemas.workflow import (
+    PhaseRead,
+    StageRead,
+    WorkflowCreate,
+    WorkflowInstanceRead,
+    WorkflowUpdate,
+)
 from backend.utils.event_utils import broadcast_event
 from backend.workflow_definition import (
+    KEY_STAGE_ID,
+    KEY_STAGE_NAME,
     PHASE_2_TEMPLATE,
     PREVIOUS_IN_TASK,
     TERMINAL_NODE_SUFFIX,
@@ -88,6 +97,45 @@ class WorkflowService:
 
         return staleness_flags
 
+    def _build_hierarchical_phases(
+        self, nodes: List[NodeInstance], staleness_flags: Dict[int, bool]
+    ) -> List[PhaseRead]:
+        """Convert node instances into a Phase -> Stage -> Node hierarchy."""
+        phases: "OrderedDict[str, PhaseRead]" = OrderedDict()
+        sorted_nodes = sorted(nodes or [], key=lambda n: n.order_index)
+
+        for node in sorted_nodes:
+            phase_name = node.phase_id
+            if phase_name not in phases:
+                phases[phase_name] = PhaseRead(name=phase_name, stages=[])
+            phase = phases[phase_name]
+
+            stage = next((s for s in phase.stages if s.id == node.stage_id), None)
+            if not stage:
+                stage = StageRead(id=node.stage_id, name=node.stage_name, nodes=[])
+                phase.stages.append(stage)
+
+            node_read = NodeInstanceRead.model_validate(node)
+            node_read.is_stale = staleness_flags.get(node.id, False)
+            stage.nodes.append(node_read)
+
+        return list(phases.values())
+
+    def _serialize_workflow(self, workflow: WorkflowInstance) -> WorkflowInstanceRead:
+        """Build a WorkflowInstanceRead with hierarchical phase data."""
+        if not workflow.nodes:
+            self.db.refresh(workflow, ["nodes"])
+        staleness_flags = self._calculate_staleness_flags(workflow)
+        hierarchical_phases = self._build_hierarchical_phases(workflow.nodes or [], staleness_flags)
+        return WorkflowInstanceRead(
+            id=workflow.id,
+            name=workflow.name,
+            status=workflow.status,
+            project_id=workflow.project_id,
+            user_id=workflow.user_id,
+            phases=hierarchical_phases,
+        )
+
     def get_workflows_paginated(
         self, user: User, skip: int, limit: int
     ) -> PaginatedResponse[WorkflowInstanceRead]:
@@ -101,13 +149,7 @@ class WorkflowService:
             .limit(limit)
             .all()
         )
-        serialized_items: List[WorkflowInstanceRead] = []
-        for workflow in workflows:
-            staleness_flags = self._calculate_staleness_flags(workflow)
-            serialized = WorkflowInstanceRead.model_validate(workflow)
-            for node_read in serialized.nodes:
-                node_read.is_stale = staleness_flags.get(node_read.id, False)
-            serialized_items.append(serialized)
+        serialized_items = [self._serialize_workflow(workflow) for workflow in workflows]
         return PaginatedResponse(total=total, items=serialized_items)
 
     def get_workflow_instance(self, workflow_id: int, user: User) -> WorkflowInstanceRead:
@@ -122,11 +164,7 @@ class WorkflowService:
         if workflow.user_id != user.id:
             raise ForbiddenException("You do not have permission to access this workflow.")
 
-        staleness_flags = self._calculate_staleness_flags(workflow)
-        workflow_read = WorkflowInstanceRead.model_validate(workflow)
-        for node_read in workflow_read.nodes:
-            node_read.is_stale = staleness_flags.get(node_read.id, False)
-        return workflow_read
+        return self._serialize_workflow(workflow)
 
     def create_workflow(self, create_data: WorkflowCreate, user: User) -> WorkflowInstance:
         project = self.db.query(Project).get(create_data.project_id)
@@ -171,6 +209,12 @@ class WorkflowService:
     def _initialize_nodes(self, workflow: WorkflowInstance):
         order_index = 0
         for node_def in WORKFLOW_DEFINITION["structure"]:
+            stage_id = node_def.get(KEY_STAGE_ID)
+            stage_name = node_def.get(KEY_STAGE_NAME)
+            if not stage_id:
+                stage_id = node_def["id"].rsplit(".", 1)[0]
+            if not stage_name:
+                stage_name = node_def["name"]
             node = NodeInstance(
                 workflow_instance_id=workflow.id,
                 user_id=workflow.user_id,
@@ -182,6 +226,8 @@ class WorkflowService:
                 external_inputs=node_def.get("external_inputs", []),
                 order_index=order_index,
                 phase_id=node_def["phase"],
+                stage_id=stage_id,
+                stage_name=stage_name,
                 task_group_id=node_def.get("task_group_id"),
                 current_stage=ExecutionStage.NOT_STARTED,
             )
@@ -288,6 +334,10 @@ class WorkflowService:
             for id_suffix, template in PHASE_2_TEMPLATE.items():
                 definition_id = f"{task_id}{id_suffix}"
                 name = f"[{task_id}] {template['name_prefix']}"
+                stage_suffix = id_suffix.rsplit(".", 1)[0] if "." in id_suffix else id_suffix
+                stage_id = f"{task_id}{stage_suffix}"
+                stage_name_prefix = template.get("stage_name_prefix") or "Execution"
+                stage_name = f"[{task_id}] {stage_name_prefix}"
                 dependencies = {
                     "1.1.1": {"required_fields": ["Formal Problem Restatement"]},
                     "1.1.2": {"required_fields": ["Structured Modeling Taskbook"]},
@@ -322,6 +372,8 @@ class WorkflowService:
                     external_inputs=node_external_inputs,
                     order_index=current_index,
                     phase_id=phase_2_name,
+                    stage_id=stage_id,
+                    stage_name=stage_name,
                     task_group_id=task_id,
                     current_stage=ExecutionStage.NOT_STARTED,
                 )
@@ -408,20 +460,25 @@ class WorkflowService:
     async def _broadcast_structure_update(self, workflow_id: int):
         workflow = (
             self.db.query(WorkflowInstance)
-            .options(joinedload(WorkflowInstance.nodes))
+            .options(joinedload(WorkflowInstance.nodes).joinedload(NodeInstance.active_version))
             .get(workflow_id)
         )
         if workflow:
-            workflow_data = WorkflowInstanceRead.model_validate(workflow).model_dump(mode="json")
+            workflow_data = self._serialize_workflow(workflow).model_dump(mode="json")
             await broadcast_event(workflow_id, EventType.WORKFLOW_STRUCTURE_UPDATED, workflow_data)
 
     async def _broadcast_workflow_update(self, workflow_data: WorkflowInstanceRead | WorkflowInstance):
         if isinstance(workflow_data, WorkflowInstance):
-            logger.warning("Broadcasting workflow update from ORM object. Staleness data might be missing.")
-            if not workflow_data.nodes:
-                self.db.refresh(workflow_data, ["nodes"])
-            serialized_data = WorkflowInstanceRead.model_validate(workflow_data).model_dump(mode="json")
             workflow_id = workflow_data.id
+            workflow_obj = (
+                self.db.query(WorkflowInstance)
+                .options(joinedload(WorkflowInstance.nodes).joinedload(NodeInstance.active_version))
+                .get(workflow_id)
+            )
+            if not workflow_obj:
+                logger.warning("Workflow {} not found for broadcast.", workflow_id)
+                return
+            serialized_data = self._serialize_workflow(workflow_obj).model_dump(mode="json")
         else:
             serialized_data = workflow_data.model_dump(mode="json")
             workflow_id = workflow_data.id

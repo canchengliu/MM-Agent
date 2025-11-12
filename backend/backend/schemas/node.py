@@ -17,6 +17,8 @@ class NodeInstanceRead(BaseModel):
     order_index: int
     active_version_id: Optional[int]
     phase_id: str
+    stage_id: str
+    stage_name: str
     task_group_id: Optional[str] = None
     is_stale: bool = False
 

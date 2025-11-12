@@ -11,8 +11,9 @@ export const env = createEnv({
    */
   server: {
     NODE_ENV: z.enum(["development", "test", "production"]),
-    AMPLITUDE_API_KEY: z.string().optional(),
-    GITHUB_OAUTH_TOKEN: z.string().optional(),
+    PLATFORM_BASE_URL: z.string().url().optional(),
+    PROJECT_SERVICE_URL: z.string().url().optional(),
+    WORKFLOW_SERVICE_URL: z.string().url().optional(),
   },
 
   /**
@@ -21,8 +22,9 @@ export const env = createEnv({
    * `NEXT_PUBLIC_`.
    */
   client: {
-    NEXT_PUBLIC_API_URL: z.string().optional(),
-    NEXT_PUBLIC_STATIC_WEBSITE_ONLY: z.boolean().optional(),
+    NEXT_PUBLIC_API_URL: z.string().url().optional(),
+    NEXT_PUBLIC_WS_URL: z.string().url().optional(),
+    NEXT_PUBLIC_PLATFORM_NAME: z.string().optional(),
     NEXT_PUBLIC_MAX_STREAM_BUFFER_SIZE: z.coerce.number().int().positive().optional(),
   },
 
@@ -32,12 +34,13 @@ export const env = createEnv({
    */
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,
+    PLATFORM_BASE_URL: process.env.PLATFORM_BASE_URL,
+    PROJECT_SERVICE_URL: process.env.PROJECT_SERVICE_URL,
+    WORKFLOW_SERVICE_URL: process.env.WORKFLOW_SERVICE_URL,
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
-    NEXT_PUBLIC_STATIC_WEBSITE_ONLY:
-      process.env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true",
+    NEXT_PUBLIC_WS_URL: process.env.NEXT_PUBLIC_WS_URL,
+    NEXT_PUBLIC_PLATFORM_NAME: process.env.NEXT_PUBLIC_PLATFORM_NAME,
     NEXT_PUBLIC_MAX_STREAM_BUFFER_SIZE: process.env.NEXT_PUBLIC_MAX_STREAM_BUFFER_SIZE,
-    AMPLITUDE_API_KEY: process.env.AMPLITUDE_API_KEY,
-    GITHUB_OAUTH_TOKEN: process.env.GITHUB_OAUTH_TOKEN,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

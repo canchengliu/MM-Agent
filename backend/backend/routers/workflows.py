@@ -27,7 +27,8 @@ def create_workflow(
     service: WorkflowService = Depends(get_workflow_service),
     current_user: User = Depends(get_current_active_verified_user),
 ):
-    return service.create_workflow(workflow_data, current_user)
+    workflow = service.create_workflow(workflow_data, current_user)
+    return service.get_workflow_instance(workflow.id, current_user)
 
 
 @router.get("/", response_model=PaginatedResponse[WorkflowInstanceRead])
@@ -57,7 +58,8 @@ def update_workflow(
     service: WorkflowService = Depends(get_workflow_service),
     current_user: User = Depends(get_current_active_verified_user),
 ):
-    return service.update_workflow(workflow_id, update_data, current_user)
+    service.update_workflow(workflow_id, update_data, current_user)
+    return service.get_workflow_instance(workflow_id, current_user)
 
 
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)

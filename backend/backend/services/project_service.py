@@ -71,6 +71,14 @@ class ProjectService:
         """Return a user's projects along with a total count for pagination."""
         return self.project_repo.list_paginated_for_user(user, skip, limit)
 
+    def get_historical_problems(self) -> List[HistoricalProblem]:
+        """Retrieve the list of available historical problems (R3.3)."""
+        return (
+            self.db.query(HistoricalProblem)
+            .order_by(HistoricalProblem.year.desc(), HistoricalProblem.type)
+            .all()
+        )
+
     def get_project_details(self, project_id: int, user: User) -> Project:
         """Return project details after verifying ownership."""
         project = self.project_repo.get_with_details(project_id)

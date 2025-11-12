@@ -21,6 +21,9 @@ KEY_ID = "id"
 KEY_SCA_OUTPUT = "sca_output_wrapper"
 KEY_SELECTED_ITEM = "selected_item"
 KEY_SELECTED_ITEMS = "selected_items"
+# Stage metadata keys
+KEY_STAGE_ID = "stage_id"
+KEY_STAGE_NAME = "stage_name"
 
 # Workflow Structure Constants
 PREVIOUS_IN_TASK = "__PREVIOUS_IN_TASK__"
@@ -34,6 +37,8 @@ WORKFLOW_DEFINITION = {
             "id": "1.1.1",
             "name": "Problem Deconstruction and Mathematical Formulation",
             "phase": "Phase 1: Strategic Analysis & Macro Architecture",
+            KEY_STAGE_ID: "1.1",
+            KEY_STAGE_NAME: "Strategic Definition",
             "type": NodeType.STANDARD,
             "hitl_mode": HITLMode.AVL,
             "dependencies": {},
@@ -43,6 +48,8 @@ WORKFLOW_DEFINITION = {
             "id": "1.1.2",
             "name": "Architecture Design and Task Decomposition",
             "phase": "Phase 1: Strategic Analysis & Macro Architecture",
+            KEY_STAGE_ID: "1.1",
+            KEY_STAGE_NAME: "Strategic Definition",
             "type": NodeType.GENERATOR,
             "hitl_mode": HITLMode.SCA,
             "dependencies": {
@@ -54,6 +61,8 @@ WORKFLOW_DEFINITION = {
             "id": "3.1.1",
             "name": "Global Logic Integration and Strategic Narrative Construction",
             "phase": "Phase 3: Global Synthesis & O-Award Paper Forging",
+            KEY_STAGE_ID: "3.1",
+            KEY_STAGE_NAME: "Global Logic & Narrative",
             "type": NodeType.STANDARD,
             "hitl_mode": HITLMode.SCA,
             "dependencies": {
@@ -66,6 +75,8 @@ WORKFLOW_DEFINITION = {
             "id": "3.1.2",
             "name": "Paper Forging and Professional Optimization",
             "phase": "Phase 3: Global Synthesis & O-Award Paper Forging",
+            KEY_STAGE_ID: "3.1",
+            KEY_STAGE_NAME: "Global Logic & Narrative",
             "type": NodeType.STANDARD,
             "hitl_mode": HITLMode.VARL,
             "dependencies": {
@@ -78,6 +89,7 @@ WORKFLOW_DEFINITION = {
 
 PHASE_2_TEMPLATE = {
     ".2.1.1": {
+        "stage_name_prefix": "Data & Model Generation",
         "name_prefix": "Data Insights and Candidate Model Generation",
         "type": NodeType.STANDARD,
         "hitl_mode": HITLMode.SCA,
@@ -87,6 +99,7 @@ PHASE_2_TEMPLATE = {
         "inherits_external_inputs": True,
     },
     ".2.1.2": {
+        "stage_name_prefix": "Data & Model Generation",
         "name_prefix": "Mathematical Formulation and Computational Design",
         "type": NodeType.STANDARD,
         "hitl_mode": HITLMode.AVL,
@@ -102,6 +115,7 @@ PHASE_2_TEMPLATE = {
         "inherits_external_inputs": False,
     },
     ".2.2.1": {
+        "stage_name_prefix": "Code & Execution",
         "name_prefix": "Code Generation and Automatic Execution",
         "type": NodeType.STANDARD,
         "hitl_mode": HITLMode.VARL,
@@ -119,6 +133,7 @@ PHASE_2_TEMPLATE = {
     },
     # This definition corresponds to TERMINAL_NODE_SUFFIX
     TERMINAL_NODE_SUFFIX: {
+        "stage_name_prefix": "Code & Execution",
         "name_prefix": "Robustness Analysis and Strategic Visualization",
         "type": NodeType.STANDARD,
         "hitl_mode": HITLMode.SCA,

@@ -1,0 +1,97 @@
+Traceback (most recent call last):
+  File "/Users/ann/miniconda3/envs/mm_agent/bin/arq", line 7, in <module>
+    sys.exit(cli())
+             ^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/click/core.py", line 1462, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/click/core.py", line 1383, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/click/core.py", line 1246, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/click/core.py", line 814, in invoke
+    return callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/arq/cli.py", line 40, in cli
+    worker_settings_ = cast('WorkerSettingsType', import_string(worker_settings))
+                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/arq/utils.py", line 146, in import_string
+    module = import_module(module_path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 999, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/Users/ann/Documents/projects/MM-Agent/backend/backend/worker.py", line 9, in <module>
+    from arq.worker import AbortJob
+ImportError: cannot import name 'AbortJob' from 'arq.worker' (/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/arq/worker.py)
+2025-11-12 09:25:16.748 | INFO     | backend.services.storage_service:__init__:28 - StorageService initialized with base path: /Users/ann/Documents/projects/MM-Agent/backend/project_storage
+INFO: Converting DATABASE_URL to psycopg driver for compatibility with sync sessions.
+[32m2025-11-12 09:25:16.894[0m | [1mINFO    [0m | [36mbackend.logging_config[0m:[36msetup_logging[0m:[36m74[0m - [1mLoguru logging configured.[0m
+09:25:16: redis connection error 10.120.16.27:7379 AuthenticationError invalid username-password pair or user is disabled., 5 retries remaining...
+[32m2025-11-12 09:25:16.909[0m | [33m[1mWARNING [0m | [36mlogging[0m:[36mcallHandlers[0m:[36m1762[0m - [33m[1mredis connection error 10.120.16.27:7379 AuthenticationError invalid username-password pair or user is disabled., 5 retries remaining...[0m
+09:25:17: redis connection error 10.120.16.27:7379 AuthenticationError invalid username-password pair or user is disabled., 4 retries remaining...
+[32m2025-11-12 09:25:17.927[0m | [33m[1mWARNING [0m | [36mlogging[0m:[36mcallHandlers[0m:[36m1762[0m - [33m[1mredis connection error 10.120.16.27:7379 AuthenticationError invalid username-password pair or user is disabled., 4 retries remaining...[0m
+09:25:18: redis connection error 10.120.16.27:7379 AuthenticationError invalid username-password pair or user is disabled., 3 retries remaining...
+[32m2025-11-12 09:25:18.949[0m | [33m[1mWARNING [0m | [36mlogging[0m:[36mcallHandlers[0m:[36m1762[0m - [33m[1mredis connection error 10.120.16.27:7379 AuthenticationError invalid username-password pair or user is disabled., 3 retries remaining...[0m
+09:25:19: redis connection error 10.120.16.27:7379 AuthenticationError invalid username-password pair or user is disabled., 2 retries remaining...
+[32m2025-11-12 09:25:19.963[0m | [33m[1mWARNING [0m | [36mlogging[0m:[36mcallHandlers[0m:[36m1762[0m - [33m[1mredis connection error 10.120.16.27:7379 AuthenticationError invalid username-password pair or user is disabled., 2 retries remaining...[0m
+09:25:20: redis connection error 10.120.16.27:7379 AuthenticationError invalid username-password pair or user is disabled., 1 retries remaining...
+[32m2025-11-12 09:25:20.973[0m | [33m[1mWARNING [0m | [36mlogging[0m:[36mcallHandlers[0m:[36m1762[0m - [33m[1mredis connection error 10.120.16.27:7379 AuthenticationError invalid username-password pair or user is disabled., 1 retries remaining...[0m
+Traceback (most recent call last):
+  File "/Users/ann/miniconda3/envs/mm_agent/bin/arq", line 7, in <module>
+    sys.exit(cli())
+             ^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/click/core.py", line 1462, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/click/core.py", line 1383, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/click/core.py", line 1246, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/click/core.py", line 814, in invoke
+    return callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/arq/cli.py", line 54, in cli
+    run_worker(worker_settings_, **kwargs)
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/arq/worker.py", line 894, in run_worker
+    worker.run()
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/arq/worker.py", line 308, in run
+    self.loop.run_until_complete(self.main_task)
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/arq/worker.py", line 346, in main
+    self._pool = await create_pool(
+                 ^^^^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/arq/connections.py", line 280, in create_pool
+    await pool.ping()
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/redis/asyncio/client.py", line 672, in execute_command
+    conn = self.connection or await pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/redis/asyncio/connection.py", line 1149, in get_connection
+    await self.ensure_connection(connection)
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/redis/asyncio/connection.py", line 1182, in ensure_connection
+    await connection.connect()
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/redis/asyncio/connection.py", line 296, in connect
+    await self.connect_check_health(check_health=True)
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/redis/asyncio/connection.py", line 322, in connect_check_health
+    await self.on_connect_check_health(check_health=check_health)
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/redis/asyncio/connection.py", line 402, in on_connect_check_health
+    auth_response = await self.read_response()
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/redis/asyncio/connection.py", line 599, in read_response
+    response = await self._parser.read_response(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ann/miniconda3/envs/mm_agent/lib/python3.12/site-packages/redis/_parsers/hiredis.py", line 278, in read_response
+    raise response
+redis.exceptions.AuthenticationError: invalid username-password pair or user is disabled.

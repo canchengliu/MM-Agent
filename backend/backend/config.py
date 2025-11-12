@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     # --- Security and Authentication (R1, R7.3) ---
     # Security settings are now loaded from the .env file.
     SECRET_KEY: str
-    ENCRYPTION_KEY: str = "R2JofR3Im5x4f8IinLcs3jJ5Hh2R90g6Z_u-d23o1oQ="  # Default for dev if not in .env
+    ENCRYPTION_KEY: str
     # Use alias to match JWT_ALGORITHM in .env file
     ALGORITHM: str = Field(default="HS256", alias="JWT_ALGORITHM")
     ACCESS_TOKEN_EXPIRE_MINUTES: int
@@ -42,12 +42,14 @@ class Settings(BaseSettings):
     @classmethod
     def validate_encryption_key(cls, v: str) -> str:
         """Validate that the encryption key is 32 url-safe base64-encoded bytes."""
+        if not v:
+            raise ValueError("ENCRYPTION_KEY must be set in the environment variables (.env).")
         try:
             # The key must be 32 bytes after decoding.
             if len(base64.urlsafe_b64decode(v)) != 32:
                 raise ValueError("Encryption key must be 32 url-safe base64-encoded bytes.")
         except (ValueError, TypeError) as e:
-            raise ValueError(f"Invalid ENCRYPTION_KEY: {e}") from e
+            raise ValueError(f"Invalid ENCRYPTION_KEY format: {e}") from e
         return v
 
     @model_validator(mode="after")

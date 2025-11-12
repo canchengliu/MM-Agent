@@ -8,7 +8,13 @@ from backend.auth.security import create_access_token
 from backend.auth.service import AuthService
 from backend.database import get_db
 from backend.exceptions import InvalidStateException
-from backend.schemas.auth import EmailVerificationRequest, ResendVerificationRequest, Token
+from backend.schemas.auth import (
+    EmailVerificationRequest,
+    PasswordResetCompletion,
+    PasswordResetRequest,
+    ResendVerificationRequest,
+    Token,
+)
 from backend.schemas.user import UserCreate, UserRead
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -52,7 +58,9 @@ def register_user(
 ):
     """Register a new user account."""
     try:
-        return auth_service.register_user(db, user_in=user_in)
+        new_user = auth_service.register_user(db, user_in=user_in)
+        auth_service.send_verification_email(db, new_user)
+        return new_user
     except InvalidStateException as exc:
         raise exc
 
@@ -78,8 +86,23 @@ def resend_verification_email(
     return {"message": "If the account exists and is not verified, a verification email has been sent."}
 
 
-@router.post("/reset-password", status_code=status.HTTP_202_ACCEPTED)
-async def request_password_reset(auth_service: AuthService = Depends(get_auth_service)):
-    """Stub endpoint for initiating password reset flow."""
-    auth_service.reset_password()
+@router.post("/request-password-reset", status_code=status.HTTP_202_ACCEPTED)
+async def request_password_reset(
+    request: PasswordResetRequest,
+    db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """Initiate the password reset flow."""
+    auth_service.initiate_password_reset(db, request.email)
     return {"message": "If an account with this email exists, a password reset link has been sent."}
+
+
+@router.post("/complete-password-reset", status_code=status.HTTP_200_OK)
+async def complete_password_reset(
+    request: PasswordResetCompletion,
+    db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """Complete the password reset using the token provided via email."""
+    auth_service.complete_password_reset(db, request.token, request.new_password)
+    return {"message": "Password has been reset successfully."}

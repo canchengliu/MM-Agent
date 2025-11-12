@@ -230,5 +230,448 @@
       "description": "Contribute brilliant ideas to shape the future of DeerFlow. Collaborate, innovate, and make impacts.",
       "contributeNow": "Contribute Now"
     }
+  },
+  "dashboard": {
+    "navbar": {
+      "actions": {
+        "openNavigation": "Open navigation",
+        "openProfile": "Open profile menu",
+        "userSettings": "User settings",
+        "logout": "Sign out"
+      },
+      "links": {
+        "projects": "Projects",
+        "settings": "Settings"
+      },
+      "profile": {
+        "unnamed": "Unassigned user",
+        "unboundEmail": "Email unavailable"
+      }
+    },
+    "shell": {
+      "loading": {
+        "view": "Loading view...",
+        "sessionTitle": "Establishing a protected session…",
+        "sessionSubtitle": "You will be redirected automatically after verification."
+      }
+    }
+  },
+  "connection": {
+    "status": {
+      "idle": {
+        "label": "Realtime idle",
+        "tooltip": "No active workflow connection."
+      },
+      "connecting": {
+        "label": "Connecting",
+        "tooltip": "Negotiating a realtime session."
+      },
+      "connected": {
+        "label": "Realtime available",
+        "tooltip": "WebSocket feed is healthy."
+      },
+      "reconnecting": {
+        "label": "Reconnecting",
+        "tooltip": "Realtime feed dropped. Attempting to recover.",
+        "banner": "Realtime updates interrupted. Attempting to reconnect..."
+      },
+      "disconnected": {
+        "label": "Disconnected",
+        "tooltip": "Unable to reach the realtime service.",
+        "banner": "Realtime updates interrupted. Unable to reach the service.",
+        "bannerWithError": "Realtime updates interrupted: {error}"
+      }
+    }
+  },
+  "projects": {
+    "create": {
+      "title": "Create project",
+      "description": "Provide a clear name and optional description to organize your workspace.",
+      "validation": {
+        "name": {
+          "min": "Project name must contain at least 2 characters.",
+          "max": "Project name cannot exceed 120 characters."
+        },
+        "description": {
+          "max": "Project description cannot exceed 600 characters."
+        }
+      },
+      "fields": {
+        "name": {
+          "label": "Project name",
+          "placeholder": "e.g. 2025 MCM Problem A Baseline"
+        },
+        "description": {
+          "label": "Description (optional)",
+          "placeholder": "Summarize the modeling strategy, datasets, or collaborators."
+        },
+        "problemType": {
+          "label": "Problem type",
+          "placeholder": "Select a classification",
+          "unassigned": "Not assigned yet",
+          "option": "Problem {type}"
+        }
+      },
+      "actions": {
+        "open": "New project",
+        "cancel": "Cancel",
+        "creating": "Creating...",
+        "submit": "Create project"
+      },
+      "toast": {
+        "created": "Project “{name}” created.",
+        "createFailed": "Unable to create the project. Please try again."
+      }
+    },
+    "table": {
+      "headers": {
+        "name": "Name",
+        "status": "Status",
+        "typeAndUpdated": "Type & Last Updated",
+        "actions": "Actions"
+      },
+      "empty": {
+        "title": "No projects yet.",
+        "subtitle": "Create a workspace to configure inputs, upload datasets, and trigger workflows."
+      },
+      "lastUpdated": "Updated {time}",
+      "actions": {
+        "openMenu": "Open project actions",
+        "edit": "Edit details",
+        "delete": "Delete project"
+      },
+      "problemType": {
+        "unassigned": "Unassigned",
+        "assigned": "Problem {type}"
+      },
+      "relativeTime": {
+        "unknown": "Unknown",
+        "justNow": "just now",
+        "minutes": "{count}m ago",
+        "hours": "{count}h ago",
+        "days": "{count}d ago"
+      }
+    },
+    "dashboard": {
+      "title": "Projects",
+      "subtitle": "Manage modeling workspaces, monitor execution states, and keep entries organized.",
+      "searchPlaceholder": "Search projects...",
+      "actions": {
+        "newProjectButton": "+ New Project",
+        "clearFilters": "Clear filters",
+        "retry": "Retry"
+      },
+      "filters": {
+        "status": {
+          "placeholder": "Status",
+          "all": "All statuses"
+        },
+        "type": {
+          "placeholder": "Type",
+          "all": "All types",
+          "unassigned": "Unassigned",
+          "option": "Problem {type}"
+        }
+      },
+      "emptyFiltered": {
+        "title": "No projects match your filters.",
+        "subtitle": "Adjust the search query or reset the filters."
+      },
+      "toast": {
+        "deleted": "Project “{name}” deleted.",
+        "deleteFailed": "Unable to delete the project. Please try again."
+      },
+      "dialog": {
+        "deleteTitle": "Delete project?",
+        "deleteDescription": "Deleting “{name}” removes all workflow instances, node versions, uploads, and cancels running tasks. This action cannot be undone.",
+        "unknownProject": "this project",
+        "cancel": "Cancel",
+        "confirm": "Delete project",
+        "deleting": "Deleting..."
+      }
+    }
+  },
+  "workspace": {
+    "layout": {
+      "drawerTrigger": "Open inspector",
+      "drawerTitle": "Inspector"
+    },
+    "controlBar": {
+      "workspaceLabel": "Workspace",
+      "breadcrumbs": {
+        "projects": "Projects",
+        "fallback": "Project {id}"
+      },
+      "exportDisabled": "Export will be available once execution data is ready.",
+      "actions": {
+        "export": "Export project",
+        "exporting": "Exporting..."
+      },
+      "toast": {
+        "loading": "Preparing project export...",
+        "success": "Download started. Check your downloads if it doesn't pop up.",
+        "failure": "Failed to export project."
+      }
+    },
+    "staleness": {
+      "defaultLabel": "Stale output. Upstream inputs changed."
+    },
+    "projectPage": {
+      "invalidId": {
+        "title": "Invalid project identifier",
+        "description": "The provided project id is not valid. Return to the dashboard and retry."
+      },
+      "loading": {
+        "title": "Loading workspace",
+        "description": "Fetching the latest project configuration..."
+      },
+      "loadFailed": {
+        "title": "Failed to load project",
+        "description": "A transient error prevented us from loading the project."
+      },
+      "notFound": {
+        "title": "Project unavailable",
+        "description": "The project was not found or you no longer have access to it."
+      },
+      "actions": {
+        "backToProjects": "Back to projects",
+        "retry": "Retry"
+      }
+    },
+    "execution": {
+      "notStarted": {
+        "title": "Workflow not started",
+        "description": "Launch the workflow from the configuration view to activate the canvas."
+      },
+      "header": "Live workflow execution",
+      "loadingGraph": "Loading workflow graph...",
+      "loadFailed": "Unable to load workflow data. Refresh the project and try again."
+    },
+    "configuration": {
+      "header": {
+        "description": "Configure datasets, metadata, and initialization sources before starting the automated workflow.",
+        "createdAt": "Created {date}",
+        "updatedAt": "Last updated {date}",
+        "problemType": "Problem type · {type}"
+      },
+      "metadata": {
+        "validation": {
+          "nameMin": "Project name must contain at least 2 characters.",
+          "nameMax": "Project name cannot exceed 120 characters.",
+          "descriptionMax": "Project description cannot exceed 600 characters."
+        },
+        "fields": {
+          "name": {
+            "label": "Project name",
+            "placeholder": "e.g. 2025 MCM Problem A Baseline"
+          },
+          "description": {
+            "label": "Description",
+            "placeholder": "Summarize the modeling strategy, datasets, or collaborators."
+          },
+          "problemType": {
+            "label": "Problem type",
+            "placeholder": "Select a track",
+            "unassigned": "Not assigned",
+            "option": "Problem {type}"
+          }
+        },
+        "helper": "Changes are saved immediately and become part of the configuration snapshot.",
+        "actions": {
+          "saving": "Saving...",
+          "save": "Save changes"
+        },
+        "problemType": {
+          "unassigned": "Not assigned",
+          "option": "Problem {type}"
+        }
+      },
+      "sections": {
+        "metadata": {
+          "title": "Project metadata",
+          "description": "Update the project name, description, and contest track."
+        },
+        "files": {
+          "title": "Files & roles",
+          "description": "Upload files and assign each one to the role expected by the workflow."
+        },
+        "start": {
+          "title": "Start workflow",
+          "description": "Validate prerequisites, then launch the automated pipeline.",
+          "helperDisabled": "Set the problem type and upload exactly one problem description to enable the start button.",
+          "requirements": {
+            "problemType": {
+              "label": "Problem type assigned",
+              "helperMissing": "Select the contest track (A-F) before launching the workflow.",
+              "helperReady": "Configured as {type}."
+            },
+            "problemDescription": {
+              "label": "Problem description uploaded",
+              "helperMissing": "Upload exactly one file with the “Problem Description” role.",
+              "helperConflict": "Keep only one Problem Description file active to avoid conflicts.",
+              "helperReady": "Ready with {filename}."
+            }
+          },
+          "actions": {
+            "launch": "Start workflow",
+            "launching": "Launching..."
+          }
+        },
+        "historical": {
+          "title": "Initialize from historical cases",
+          "description": "Bootstrap files and metadata using curated competition archives.",
+          "field": {
+            "label": "Historical problem",
+            "placeholder": "Select a template"
+          },
+          "actions": {
+            "refresh": "Refresh list",
+            "refreshing": "Refreshing...",
+            "apply": "Apply template",
+            "applying": "Applying..."
+          },
+          "empty": "No templates available yet.",
+          "placeholder": "Pick a template to view its summary.",
+          "badges": {
+            "datasetIncluded": "Dataset included",
+            "datasetMissing": "Dataset not bundled"
+          }
+        }
+      },
+      "historical": {
+        "error": "Unable to load historical problems. Please try again."
+      },
+      "toast": {
+        "metadataSaved": "Project metadata saved.",
+        "metadataFailed": "Failed to update project. Please try again.",
+        "workflowStarted": "Workflow started. Switching to the execution view.",
+        "workflowFailed": "Failed to start the workflow. Please try again.",
+        "historicalInitialized": "Initialized content from the selected historical problem.",
+        "historicalFailed": "Failed to apply the template. Please try again."
+      }
+    },
+    "files": {
+      "list": {
+        "roles": {
+          "problemDescription": "Primary brief or prompt that defines the modeling task.",
+          "dataset": "Structured data files consumed by workflow nodes (CSV, JSON, etc.).",
+          "reference": "Optional supporting docs such as papers, rubrics, or clarifications."
+        },
+        "badges": {
+          "required": "Required",
+          "count": "{count, plural, one {{count} file} other {{count} files}}"
+        },
+        "uploadedOn": "Uploaded {timestamp}",
+        "emptyState": "No files uploaded for this role.",
+        "alerts": {
+          "required": "Upload at least one file before starting the workflow.",
+          "conflict": "Only one problem description can remain active. Replace or archive extra uploads."
+        }
+      },
+      "uploader": {
+        "roles": {
+          "problemDescription": {
+            "label": "Problem Description",
+            "description": "Required. Upload the official contest brief or prompt."
+          },
+          "dataset": {
+            "label": "Dataset",
+            "description": "Structured CSV/JSON/TXT data consumed by modeling nodes."
+          },
+          "reference": {
+            "label": "Reference Material",
+            "description": "Optional supporting notes, papers, or clarifications."
+          }
+        },
+        "fields": {
+          "role": {
+            "label": "File role",
+            "placeholder": "Select a role"
+          },
+          "file": {
+            "label": "Select file",
+            "selected": "Selected file: {name}",
+            "hint": "Maximum size 50MB. Compressed archives are supported."
+          }
+        },
+        "warnings": {
+          "roleConflict": "A new upload will replace the existing {role} in the workflow snapshot."
+        },
+        "hints": {
+          "formats": "Accepted formats: PDF, DOCX, Markdown, CSV, JSON, ZIP. Use descriptive filenames to track revisions."
+        },
+        "actions": {
+          "clear": "Clear",
+          "upload": "Upload file",
+          "uploading": "Uploading..."
+        },
+        "toast": {
+          "success": "“{name}” uploaded as {role}.",
+          "failure": "Failed to upload the file. Please try again."
+        }
+      }
+    },
+    "inspector": {
+      "tabs": {
+        "results": "Results",
+        "history": "History",
+        "dependencies": "Dependencies"
+      },
+      "panel": {
+        "label": "Inspector",
+        "fallbackTitle": "Node {id}",
+        "subtitle": "{stage} · {type}",
+        "loadingSubtitle": "Loading node details...",
+        "missingSubtitle": "Node metadata is not available."
+      },
+      "inlineError": {
+        "title": "Latest data is unavailable"
+      },
+      "empty": {
+        "title": "Select a node to inspect",
+        "description": "The inspector shows runtime status, history, and dependencies for the focused node."
+      },
+      "loading": "Loading node details...",
+      "error": {
+        "title": "Inspector unavailable",
+        "fallback": "Unable to load node details."
+      }
+    },
+    "results": {
+      "staleness": {
+        "title": "Stale inputs detected",
+        "description": "Upstream nodes have published new versions since this node last executed. Re-execute to align with the latest data.",
+        "nodeLabel": "Node {id}",
+        "versionDelta": "consumed V{consumed} → active V{active}",
+        "unknownVersion": "?"
+      },
+      "notStarted": {
+        "stage": "Stage: {stage}",
+        "title": "Execution not started",
+        "description": "Run upstream nodes sequentially from the canvas to unlock this step."
+      },
+      "generic": {
+        "stage": "Stage: {stage}",
+        "description": "This node status is not handled yet."
+      }
+    }
+  },
+  "status": {
+    "project": {
+      "configuring": "Configuring",
+      "running": "Running",
+      "completed": "Completed"
+    },
+    "node": {
+      "notStarted": "Not Started",
+      "executing": "Executing",
+      "awaitingHitl": "Awaiting HITL Approval",
+      "failed": "Failed",
+      "canceled": "Canceled"
+    },
+    "common": {
+      "unknown": "Unknown",
+      "ariaLabel": "{status} status"
+    }
   }
 }

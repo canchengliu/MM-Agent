@@ -35,6 +35,24 @@ def get_node_details(
 
 
 @router.post(
+    "/{node_id}/cancel",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=Dict[str, Any],
+    summary="Cancel an EXECUTING node",
+)
+async def cancel_node_execution(
+    node_id: int,
+    service: NodeService = Depends(get_node_service),
+    current_user: User = Depends(get_current_active_verified_user),
+) -> Dict[str, Any]:
+    """
+    Request cancellation of an ongoing node execution.
+    This sends an abort signal to the worker processing the task.
+    """
+    return await service.cancel_execution(node_id, current_user)
+
+
+@router.post(
     "/{node_id}/re-execute",
     status_code=status.HTTP_202_ACCEPTED,
     response_model=Dict[str, Any],

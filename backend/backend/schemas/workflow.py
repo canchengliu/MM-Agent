@@ -19,13 +19,24 @@ class WorkflowUpdate(BaseModel):
     name: Optional[str] = None
 
 
+class StageRead(BaseModel):
+    id: str
+    name: str
+    nodes: List[NodeInstanceRead]
+
+
+class PhaseRead(BaseModel):
+    name: str
+    stages: List[StageRead]
+
+
 class WorkflowInstanceRead(BaseModel):
     id: int
     name: str
     status: WorkflowStatus
     project_id: int
     user_id: int
-    nodes: List[NodeInstanceRead]
+    phases: List[PhaseRead]
 
     class Config:
         from_attributes = True

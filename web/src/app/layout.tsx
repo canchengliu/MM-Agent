@@ -4,26 +4,30 @@
 import "~/styles/globals.css";
 
 import { type Metadata } from "next";
-import { Geist } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import { NextIntlClientProvider } from 'next-intl';
 import { getLocale, getMessages } from 'next-intl/server';
 
-import { ThemeProviderWrapper } from "~/components/deer-flow/theme-provider-wrapper";
+import { ThemeProviderWrapper, Toaster } from "~/components/platform";
 import { env } from "~/env";
 
-import { Toaster } from "../components/deer-flow/toaster";
+const platformName = env.NEXT_PUBLIC_PLATFORM_NAME ?? "O-Award Modeling Platform";
 
 export const metadata: Metadata = {
-  title: "🦌 DeerFlow",
+  title: platformName,
   description:
-    "Deep Exploration and Efficient Research, an AI tool that combines language models with specialized tools for research tasks.",
+    "Workspace for orchestrating competition workflows, HITL collaboration, and project governance.",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 
-const geist = Geist({
+const geistSans = Geist({
   subsets: ["latin"],
   variable: "--font-geist-sans",
+});
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  variable: "--font-geist-mono",
 });
 
 export default async function RootLayout({
@@ -33,7 +37,11 @@ export default async function RootLayout({
   const messages = await getMessages();
   
   return (
-    <html lang={locale} className={`${geist.variable}`} suppressHydrationWarning>
+    <html
+      lang={locale}
+      className={`${geistSans.variable} ${geistMono.variable}`}
+      suppressHydrationWarning
+    >
       <head>
         {/* Define isSpace function globally to fix markdown-it issues with Next.js + Turbopack
           https://github.com/markdown-it/markdown-it/issues/1082#issuecomment-2749656365 */}
@@ -52,20 +60,6 @@ export default async function RootLayout({
           <ThemeProviderWrapper>{children}</ThemeProviderWrapper>
           <Toaster />
         </NextIntlClientProvider>
-        {
-          // NO USER BEHAVIOR TRACKING OR PRIVATE DATA COLLECTION BY DEFAULT
-          //
-          // When `NEXT_PUBLIC_STATIC_WEBSITE_ONLY` is `true`, the script will be injected
-          // into the page only when `AMPLITUDE_API_KEY` is provided in `.env`
-        }
-        {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY && env.AMPLITUDE_API_KEY && (
-          <>
-            <Script src="https://cdn.amplitude.com/script/d2197dd1df3f2959f26295bb0e7e849f.js"></Script>
-            <Script id="amplitude-init" strategy="lazyOnload">
-              {`window.amplitude.init('${env.AMPLITUDE_API_KEY}', {"fetchRemoteConfig":true,"autocapture":true});`}
-            </Script>
-          </>
-        )}
       </body>
     </html>
   );

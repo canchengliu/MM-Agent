@@ -102,6 +102,8 @@ class NodeInstance(Base):
     dependencies = Column(MutableDict.as_mutable(JSON), nullable=True)
     external_inputs = Column(MutableList.as_mutable(JSON), nullable=True)
     phase_id = Column(String, nullable=False, index=True)
+    stage_id = Column(String, nullable=False, index=True)
+    stage_name = Column(String, nullable=False)
     task_group_id = Column(String, nullable=True, index=True)
 
     workflow = relationship("WorkflowInstance", back_populates="nodes")

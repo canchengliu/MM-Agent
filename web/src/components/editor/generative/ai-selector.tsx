@@ -17,7 +17,7 @@ import { ScrollArea } from "../../ui/scroll-area";
 import AICompletionCommands from "./ai-completion-command";
 import AISelectorCommands from "./ai-selector-commands";
 import { LoadingOutlined } from "@ant-design/icons";
-import { resolveServiceURL } from "~/core/api/resolve-service-url";
+import { resolveServiceURL } from "~/core/api/utils";
 import { fetchStream } from "~/core/sse";
 //TODO: I think it makes more sense to create a custom Tiptap extension for this functionality https://tiptap.dev/docs/editor/ai/introduction
 

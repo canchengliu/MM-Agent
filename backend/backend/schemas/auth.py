@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 
 
 class Token(BaseModel):
@@ -29,3 +29,23 @@ class ResendVerificationRequest(BaseModel):
     """Schema for requesting a new verification email."""
 
     email: EmailStr
+
+
+class PasswordResetRequest(BaseModel):
+    """Schema for initiating password reset."""
+
+    email: EmailStr
+
+
+class PasswordResetCompletion(BaseModel):
+    """Schema for completing the password reset process."""
+
+    token: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password_strength(cls, value: str) -> str:
+        from backend.schemas.user import _validate_password_strength
+
+        return _validate_password_strength(value)

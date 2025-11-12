@@ -83,7 +83,6 @@ class AuthService:
             db.commit()
             db.refresh(new_user)
             logger.info("New user registered successfully", user_id=new_user.id, email=new_user.email)
-            self.send_verification_email(db, new_user)
             return new_user
         except Exception:
             db.rollback()
@@ -141,10 +140,37 @@ class AuthService:
         logger.info("Email verified successfully for user {}", user.id)
         return user
 
-    def reset_password(self) -> None:
-        """
-        (STUB) Business logic for handling password reset requests.
-        This would involve generating a secure token and sending a reset link.
-        """
-        logger.warning("STUB: Password reset logic is not implemented.")
-        pass
+    def initiate_password_reset(self, db: Session, email: str) -> None:
+        """Generate a password reset token and simulate sending an email (R1.3)."""
+        user = self.get_user_by_email(db, email)
+
+        if user and user.is_active:
+            token = create_token(data={"sub": str(user.id)}, token_type=TokenType.PASSWORD_RESET)
+            logger.info("SIMULATION: Sending password reset email to {}", user.email)
+            print(f"SIMULATION: Password Reset Token for {user.email}: {token}")
+        else:
+            logger.info("Password reset requested for email: {}. Silently handling.", email)
+
+    def complete_password_reset(self, db: Session, token: str, new_password: str) -> None:
+        """Verify the reset token and update the user's password (R1.3)."""
+        payload = decode_token(token, TokenType.PASSWORD_RESET)
+        user_id_str = payload.get("sub")
+
+        if not user_id_str:
+            raise WorkflowException("Invalid token payload.", status_code=400)
+
+        try:
+            user_id = int(user_id_str)
+            user = db.get(User, user_id)
+        except (ValueError, TypeError):
+            raise WorkflowException("Invalid or expired token.", status_code=400)
+
+        if not user:
+            raise WorkflowException("Invalid or expired token.", status_code=400)
+
+        if not user.is_active:
+            raise ForbiddenException("Cannot reset password for an inactive account.")
+
+        user.hashed_password = get_password_hash(new_password)
+        db.commit()
+        logger.info("Password reset successfully completed for user {}", user.id)
