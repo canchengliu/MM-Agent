@@ -16,7 +16,7 @@ from backend.database import get_db
 from backend.exceptions import WorkflowException
 from backend.logging_config import setup_logging
 from backend.redis import close_redis_pool, get_redis_pool
-from backend.routers import api_router, auth_router, nodes_router, projects_router, users_router, workflows_router
+from backend.routers import api_router
 from backend.schemas.common import SystemInfo
 from backend.schemas.error import ErrorResponse
 from backend.utils.event_utils import broadcast_from_server
@@ -117,11 +117,7 @@ async def workflow_exception_handler(request: Request, exc: WorkflowException) -
     )
 
 
-app.include_router(auth_router)
-app.include_router(users_router)
-app.include_router(projects_router)
-app.include_router(workflows_router)
-app.include_router(nodes_router)
+# Include the API router which contains all routes with /api/v1 prefix
 app.include_router(api_router)
 
 

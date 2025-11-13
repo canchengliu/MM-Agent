@@ -38,11 +38,12 @@ from backend.schemas.node import (
     TemporaryExecutionRead,
 )
 from backend.services.execution_engine.config_resolver import resolve_config
-from backend.services.execution_engine.executor import ExecutionResult, NodeExecutor
+from backend.services.execution_engine.executor import NodeExecutor
+from backend.services.execution_engine.results import ExecutionResult
 from backend.services.storage_service import storage_service
 from backend.task_names import TASK_EXECUTE_NODE
 from backend.utils.event_utils import broadcast_event
-from backend.workflow_definition import HITLMode, NodeType
+from backend.workflow.spec import HITLMode, NodeType
 
 
 _INPUT_KEY_TO_ROLE_MAP = {

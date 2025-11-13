@@ -67,14 +67,22 @@ class Settings(BaseSettings):
 
         # Otherwise, build it from the component parts.
         path = str(self.REDIS_DB or 0)
-        built_url = RedisDsn.build(
-            scheme=self.REDIS_SCHEME,
-            username=self.REDIS_USERNAME,
-            password=self.REDIS_PASSWORD,
-            host=self.REDIS_HOST,
-            port=self.REDIS_PORT,
-            path=path,
-        )
+        
+        # For password-only authentication (legacy mode), don't include username
+        # Only include username if it's explicitly provided
+        build_kwargs = {
+            "scheme": self.REDIS_SCHEME,
+            "password": self.REDIS_PASSWORD,
+            "host": self.REDIS_HOST,
+            "port": self.REDIS_PORT,
+            "path": path,
+        }
+        
+        # Only add username if it's explicitly set (not None)
+        if self.REDIS_USERNAME is not None:
+            build_kwargs["username"] = self.REDIS_USERNAME
+        
+        built_url = RedisDsn.build(**build_kwargs)
 
         # Set the assembled URL on the settings object.
         self.REDIS_URL = built_url

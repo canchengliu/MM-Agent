@@ -18,7 +18,7 @@ from sqlalchemy.orm import relationship
 
 from backend.database import Base
 from backend.models.enum_utils import enum_values
-from backend.workflow_definition import HITLMode, NodeType
+from backend.workflow.spec import HandlerType, HITLMode, NodeType, SCASelectionMode
 
 
 class WorkflowStatus(str, Enum):
@@ -92,6 +92,15 @@ class NodeInstance(Base):
     name = Column(String, nullable=False)
     node_type = Column(SAEnum(NodeType, name="nodetype", values_callable=enum_values), nullable=False)
     hitl_mode = Column(SAEnum(HITLMode, name="hitlmode", values_callable=enum_values), nullable=False)
+    handler_type = Column(
+        SAEnum(HandlerType, name="handlertype", values_callable=enum_values),
+        nullable=False,
+    )
+    sca_selection_mode = Column(
+        SAEnum(SCASelectionMode, name="scaselectionmode", values_callable=enum_values),
+        nullable=True,
+    )
+    export_config = Column(MutableDict.as_mutable(JSON), nullable=True)
     status = Column(SAEnum(NodeStatus, name="nodestatus", values_callable=enum_values), default=NodeStatus.NOT_STARTED)
     current_stage = Column(
         SAEnum(ExecutionStage, name="executionstage", values_callable=enum_values),

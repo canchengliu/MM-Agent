@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 from backend.models.workflow import ExecutionStage, NodeStatus, VersionSource
-from backend.workflow_definition import HITLMode, NodeType
+from backend.workflow.spec import HandlerType, HITLMode, NodeType, SCASelectionMode
 
 
 class NodeInstanceRead(BaseModel):
@@ -14,6 +14,9 @@ class NodeInstanceRead(BaseModel):
     current_stage: ExecutionStage
     node_type: NodeType
     hitl_mode: HITLMode
+    handler_type: HandlerType
+    sca_selection_mode: Optional[SCASelectionMode] = None
+    export_config: Optional[Dict[str, Any]] = None
     order_index: int
     active_version_id: Optional[int]
     phase_id: str

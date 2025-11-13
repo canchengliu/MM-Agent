@@ -5,16 +5,11 @@ Revises: b83f6d2e1c4a
 Create Date: 2024-06-04 00:00:00.000000
 
 """
+from enum import Enum
+
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.sql import table, column, select
-
-from backend.workflow_definition import (
-    KEY_STAGE_ID,
-    KEY_STAGE_NAME,
-    PHASE_2_TEMPLATE,
-    WORKFLOW_DEFINITION,
-)
 
 
 # revision identifiers, used by Alembic.
@@ -22,6 +17,136 @@ revision = 'c2d1e0f9ab12'
 down_revision = 'b83f6d2e1c4a'
 branch_labels = None
 depends_on = None
+
+
+class _NodeType(str, Enum):
+    STANDARD = "Standard"
+    GENERATOR = "Generator"
+
+
+class _HITLMode(str, Enum):
+    VARL = "VARL"
+    SCA = "SCA"
+    AVL = "AVL"
+
+
+KEY_STAGE_ID = "stage_id"
+KEY_STAGE_NAME = "stage_name"
+TERMINAL_NODE_SUFFIX = ".2.2.2"
+PREVIOUS_IN_TASK = "__PREVIOUS_IN_TASK__"
+
+WORKFLOW_DEFINITION = {
+    "name": "O-Award Modeling Workflow",
+    "structure": [
+        {
+            "id": "1.1.1",
+            "name": "Problem Deconstruction and Mathematical Formulation",
+            "phase": "Phase 1: Strategic Analysis & Macro Architecture",
+            KEY_STAGE_ID: "1.1",
+            KEY_STAGE_NAME: "Strategic Definition",
+            "type": _NodeType.STANDARD,
+            "hitl_mode": _HITLMode.AVL,
+            "dependencies": {},
+            "external_inputs": ["Problem Statement", "Datasets"],
+        },
+        {
+            "id": "1.1.2",
+            "name": "Architecture Design and Task Decomposition",
+            "phase": "Phase 1: Strategic Analysis & Macro Architecture",
+            KEY_STAGE_ID: "1.1",
+            KEY_STAGE_NAME: "Strategic Definition",
+            "type": _NodeType.GENERATOR,
+            "hitl_mode": _HITLMode.SCA,
+            "dependencies": {
+                "1.1.1": {"required_fields": ["Formal Problem Restatement", "Global Assumption Framework"]}
+            },
+            "external_inputs": [],
+        },
+        {
+            "id": "3.1.1",
+            "name": "Global Logic Integration and Strategic Narrative Construction",
+            "phase": "Phase 3: Global Synthesis & O-Award Paper Forging",
+            KEY_STAGE_ID: "3.1",
+            KEY_STAGE_NAME: "Global Logic & Narrative",
+            "type": _NodeType.STANDARD,
+            "hitl_mode": _HITLMode.SCA,
+            "dependencies": {
+                "1.1.1": {"required_fields": ["Formal Problem Restatement"]},
+                "1.1.2": {"required_fields": ["Structured Modeling Taskbook"]},
+            },
+            "external_inputs": [],
+        },
+        {
+            "id": "3.1.2",
+            "name": "Paper Forging and Professional Optimization",
+            "phase": "Phase 3: Global Synthesis & O-Award Paper Forging",
+            KEY_STAGE_ID: "3.1",
+            KEY_STAGE_NAME: "Global Logic & Narrative",
+            "type": _NodeType.STANDARD,
+            "hitl_mode": _HITLMode.VARL,
+            "dependencies": {
+                "3.1.1": {"required_fields": ["Thesis Statement", "Narrative Outline"]}
+            },
+            "external_inputs": [],
+        },
+    ],
+}
+
+PHASE_2_TEMPLATE = {
+    ".2.1.1": {
+        "stage_name_prefix": "Data & Model Generation",
+        "name_prefix": "Data Insights and Candidate Model Generation",
+        "type": _NodeType.STANDARD,
+        "hitl_mode": _HITLMode.SCA,
+        "inputs": {},
+        "outputs": ["sca_output_wrapper"],
+        "inherits_external_inputs": True,
+    },
+    ".2.1.2": {
+        "stage_name_prefix": "Data & Model Generation",
+        "name_prefix": "Mathematical Formulation and Computational Design",
+        "type": _NodeType.STANDARD,
+        "hitl_mode": _HITLMode.AVL,
+        "inputs": {PREVIOUS_IN_TASK: ["sca_output_wrapper"]},
+        "outputs": [
+            "math_formulation",
+            "execution_blueprint",
+        ],
+        "inherits_external_inputs": False,
+    },
+    ".2.2.1": {
+        "stage_name_prefix": "Code & Execution",
+        "name_prefix": "Code Generation and Automatic Execution",
+        "type": _NodeType.STANDARD,
+        "hitl_mode": _HITLMode.VARL,
+        "inputs": {PREVIOUS_IN_TASK: ["execution_blueprint"]},
+        "outputs": [
+            "raw_results",
+            "vv_data",
+            "sensitivity_data",
+        ],
+        "inherits_external_inputs": True,
+    },
+    TERMINAL_NODE_SUFFIX: {
+        "stage_name_prefix": "Code & Execution",
+        "name_prefix": "Robustness Analysis and Strategic Visualization",
+        "type": _NodeType.STANDARD,
+        "hitl_mode": _HITLMode.SCA,
+        "inputs": {
+            PREVIOUS_IN_TASK: [
+                "raw_results",
+                "vv_data",
+                "sensitivity_data",
+            ]
+        },
+        "outputs": [
+            "sca_output_wrapper",
+            "vv_report",
+            "key_output_doc",
+        ],
+        "inherits_external_inputs": False,
+    },
+}
 
 
 STATIC_STAGE_MAP = {

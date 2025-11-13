@@ -1,102 +1,72 @@
-// Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
-// SPDX-License-Identifier: MIT
+/**
+ * Fetches a streaming response (like SSE or NDJSON stream) from the server.
+ * (Placeholder implementation required by AI features in the editor).
+ */
 
-import { env } from "~/env";
+export interface StreamEventChunk {
+  type: 'data' | 'error' | 'done';
+  data: string;
+}
 
-import { type StreamEvent } from "./StreamEvent";
-
+/**
+ * Fetches a stream from the given URL and yields decoded chunks.
+ * This implementation assumes a simple text stream (like LLM output).
+ */
 export async function* fetchStream(
   url: string,
-  init: RequestInit,
-): AsyncIterable<StreamEvent> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-cache",
-    },
-    ...init,
-  });
-  if (response.status !== 200) {
-    throw new Error(`Failed to fetch from ${url}: ${response.status}`);
+  options: RequestInit
+): AsyncGenerator<StreamEventChunk, void, unknown> {
+  let response: Response;
+  try {
+    response = await fetch(url, options);
+  } catch (error) {
+    console.error("Network error during fetchStream:", error);
+    yield { type: 'error', data: `Network error: ${String(error)}` };
+    throw error;
   }
-  // Read from response body, event by event. An event always ends with a '\n\n'.
-  const reader = response.body
-    ?.pipeThrough(new TextDecoderStream())
-    .getReader();
-  if (!reader) {
-    throw new Error("Response body is not readable");
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "Failed to read error body");
+    const errorMessage = `Request failed: ${response.status} ${errorBody}`;
+
+     // Handle case where the API endpoint might not be implemented yet (common during development)
+     if (response.status === 404) {
+        console.warn(`API endpoint not found: ${url}. AI features might be disabled.`);
+        yield { type: 'error', data: "AI feature endpoint not implemented (404)." };
+        // We don't throw here, allowing the hook to handle the error gracefully.
+        return;
+    }
+
+    yield { type: 'error', data: errorMessage };
+    // We don't throw here, allowing the hook to handle the error gracefully.
+    return;
   }
+
+  if (!response.body) {
+    yield { type: 'error', data: 'Response body is empty or not readable' };
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
 
   try {
-    let buffer = "";
-    // Use configurable buffer size from environment, default to 1MB (1048576 bytes)
-    const MAX_BUFFER_SIZE = env.NEXT_PUBLIC_MAX_STREAM_BUFFER_SIZE ?? (1024 * 1024);
-
     while (true) {
       const { done, value } = await reader.read();
       if (done) {
-        // Handle remaining buffer data
-        if (buffer.trim()) {
-          const event = parseEvent(buffer.trim());
-          if (event) {
-            yield event;
-          }
-        }
+        yield { type: 'done', data: '' };
         break;
       }
-
-      buffer += value;
-
-      // Check buffer size to avoid memory overflow
-      if (buffer.length > MAX_BUFFER_SIZE) {
-        throw new Error(
-          `Buffer overflow - received ${(buffer.length / 1024 / 1024).toFixed(2)}MB of data without proper event boundaries. ` +
-          `Max buffer size is ${(MAX_BUFFER_SIZE / 1024 / 1024).toFixed(2)}MB. ` +
-          `You can increase this by setting NEXT_PUBLIC_MAX_STREAM_BUFFER_SIZE environment variable.`
-        );
-      }
-
-      let newlineIndex;
-      while ((newlineIndex = buffer.indexOf("\n\n")) !== -1) {
-        const chunk = buffer.slice(0, newlineIndex);
-        buffer = buffer.slice(newlineIndex + 2);
-
-        if (chunk.trim()) {
-          const event = parseEvent(chunk);
-          if (event) {
-            yield event;
-          }
-        }
+      // Decode the chunk
+      const chunk = decoder.decode(value, { stream: true });
+      if (chunk) {
+        yield { type: 'data', data: chunk };
       }
     }
+  } catch (error) {
+    console.error("Error reading stream:", error);
+    yield { type: 'error', data: String(error) };
   } finally {
-    reader.releaseLock(); // Release the reader lock
+    reader.releaseLock();
   }
-
-}
-
-function parseEvent(chunk: string) {
-  let resultEvent = "message";
-  let resultData: string | null = null;
-  for (const line of chunk.split("\n")) {
-    const pos = line.indexOf(": ");
-    if (pos === -1) {
-      continue;
-    }
-    const key = line.slice(0, pos);
-    const value = line.slice(pos + 2);
-    if (key === "event") {
-      resultEvent = value;
-    } else if (key === "data") {
-      resultData = value;
-    }
-  }
-  if (resultEvent === "message" && resultData === null) {
-    return undefined;
-  }
-  return {
-    event: resultEvent,
-    data: resultData,
-  } as StreamEvent;
 }

@@ -16,7 +16,15 @@ async def get_redis_pool() -> ArqRedis:
 
     global redis_pool
     if redis_pool is None:
-        redis_settings = RedisSettings.from_dsn(str(settings.REDIS_URL))
+        # Use RedisSettings directly to have better control over authentication
+        # This handles password-only authentication (legacy mode) correctly
+        redis_settings = RedisSettings(
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            database=settings.REDIS_DB,
+            password=settings.REDIS_PASSWORD,
+            username=settings.REDIS_USERNAME,  # None for password-only auth
+        )
         redis_pool = await create_pool(redis_settings)
     return redis_pool
 

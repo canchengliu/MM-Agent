@@ -143,7 +143,14 @@ class WorkerSettings:
     """arq worker configuration."""
 
     functions = [execute_node_task]
-    redis_settings = RedisSettings.from_dsn(str(settings.REDIS_URL))
+    # Use RedisSettings directly to handle password-only authentication correctly
+    redis_settings = RedisSettings(
+        host=settings.REDIS_HOST,
+        port=settings.REDIS_PORT,
+        database=settings.REDIS_DB,
+        password=settings.REDIS_PASSWORD,
+        username=settings.REDIS_USERNAME,  # None for password-only auth
+    )
     job_timeout = 300  # 5 minutes
     on_job_failure = on_job_failure
     allow_abort_jobs = True

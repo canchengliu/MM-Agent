@@ -1,0 +1,160 @@
+id: o_award_v1
+name: O-Award Modeling Workflow
+terminal_node_suffix: ".2.2.2"
+
+dynamic_task_templates:
+  ".2.1.1":
+    name_prefix: "Data Insights and Candidate Model Generation"
+    stage_name_prefix: "Data & Model Generation"
+    type: Standard
+    hitl_mode: SCA
+    inputs: {}
+    outputs:
+      - sca_output_wrapper
+    inherits_external_inputs: true
+    handler_type: GenericSCAHandler
+    sca_selection_mode: Single
+    export_config:
+      handler: intermediate_json
+      behavior:
+        variant: model_candidates
+
+  ".2.1.2":
+    name_prefix: "Mathematical Formulation and Computational Design"
+    stage_name_prefix: "Data & Model Generation"
+    type: Standard
+    hitl_mode: AVL
+    inputs:
+      __PREVIOUS_IN_TASK__:
+        - sca_output_wrapper
+    outputs:
+      - math_formulation
+      - execution_blueprint
+    inherits_external_inputs: false
+    handler_type: GenericAVLHandler
+    export_config:
+      handler: intermediate_json
+      behavior:
+        variant: formulation
+
+  ".2.2.1":
+    name_prefix: "Code Generation and Automatic Execution"
+    stage_name_prefix: "Code & Execution"
+    type: Standard
+    hitl_mode: VARL
+    inputs:
+      __PREVIOUS_IN_TASK__:
+        - execution_blueprint
+    outputs:
+      - raw_results
+      - vv_data
+      - sensitivity_data
+    inherits_external_inputs: true
+    handler_type: CodeExecutionHandler
+    export_config:
+      handler: code_artifacts
+      code_keys:
+        - generated_code.py
+        - execution.log
+        - error.log
+      behavior:
+        include_vv_data: true
+
+  ".2.2.2":
+    name_prefix: "Robustness Analysis and Strategic Visualization"
+    stage_name_prefix: "Code & Execution"
+    type: Standard
+    hitl_mode: SCA
+    inputs:
+      __PREVIOUS_IN_TASK__:
+        - raw_results
+        - vv_data
+        - sensitivity_data
+    outputs:
+      - sca_output_wrapper
+      - vv_report
+      - key_output_doc
+    inherits_external_inputs: false
+    handler_type: GenericSCAHandler
+    sca_selection_mode: Multiple
+    export_config:
+      handler: intermediate_json
+      behavior:
+        variant: visualization
+        visualization_candidates: true
+
+structure:
+  - id: "1.1.1"
+    name: "Problem Deconstruction and Mathematical Formulation"
+    phase: "Phase 1: Strategic Analysis & Macro Architecture"
+    stage_id: "1.1"
+    stage_name: "Strategic Definition"
+    type: Standard
+    hitl_mode: AVL
+    dependencies: {}
+    external_inputs:
+      - Problem Statement
+      - Datasets
+    handler_type: GenericAVLHandler
+    export_config:
+      handler: intermediate_json
+
+  - id: "1.1.2"
+    name: "Architecture Design and Task Decomposition"
+    phase: "Phase 1: Strategic Analysis & Macro Architecture"
+    stage_id: "1.1"
+    stage_name: "Strategic Definition"
+    type: Generator
+    hitl_mode: SCA
+    dependencies:
+      "1.1.1":
+        required_fields:
+          - Formal Problem Restatement
+          - Global Assumption Framework
+    external_inputs: []
+    handler_type: TaskbookGeneratorHandler
+    sca_selection_mode: Single
+    export_config:
+      handler: intermediate_json
+      behavior:
+        variant: taskbook
+    generates_task_id_from: "Structured Modeling Taskbook"
+
+  - id: "3.1.1"
+    name: "Global Logic Integration and Strategic Narrative Construction"
+    phase: "Phase 3: Global Synthesis & O-Award Paper Forging"
+    stage_id: "3.1"
+    stage_name: "Global Logic & Narrative"
+    type: Standard
+    hitl_mode: SCA
+    dependencies:
+      "1.1.1":
+        required_fields:
+          - Formal Problem Restatement
+      "1.1.2":
+        required_fields:
+          - Structured Modeling Taskbook
+    external_inputs: []
+    handler_type: NarrativeSynthesisHandler
+    sca_selection_mode: Single
+    export_config:
+      handler: intermediate_json
+
+  - id: "3.1.2"
+    name: "Paper Forging and Professional Optimization"
+    phase: "Phase 3: Global Synthesis & O-Award Paper Forging"
+    stage_id: "3.1"
+    stage_name: "Global Logic & Narrative"
+    type: Standard
+    hitl_mode: VARL
+    dependencies:
+      "3.1.1":
+        required_fields:
+          - Thesis Statement
+          - Narrative Outline
+    external_inputs: []
+    handler_type: FinalPaperHandler
+    export_config:
+      handler: final_paper
+      paper_key: "Submission-Ready Paper"
+      filename: "O-Award Paper.md"

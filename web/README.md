@@ -18,7 +18,7 @@ This is the web UI for [`DeerFlow`](https://github.com/bytedance/deer-flow).
 
 Create a `.env` file in the project root and configure the following environment variables:
 
-- `NEXT_PUBLIC_API_URL`: The URL of the deer-flow API.
+- `NEXT_PUBLIC_API_BASE_URL`: The base URL of the backend API (defaults to `http://localhost:8000/api/v1`).
 
 It's always a good idea to start with the given example file, and edit the `.env` file with your own values:
 
@@ -50,11 +50,11 @@ pnpm dev
 
 By default, the web UI will be available at `http://localhost:3000`.
 
-You can set the `NEXT_PUBLIC_API_URL` environment variable if you're using a different host or location.
+You can set the `NEXT_PUBLIC_API_BASE_URL` environment variable if you're using a different host or location.
 
 ```ini
 # .env
-NEXT_PUBLIC_API_URL=http://localhost:8000/api
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
 ```
 
 ## Docker
@@ -66,7 +66,7 @@ First, you need read the [configuration](#configuration) below. Make sure `.env`
 Second, to build a Docker image of your own web server:
 
 ```bash
-docker build --build-arg NEXT_PUBLIC_API_URL=YOUR_DEER-FLOW_API -t deer-flow-web .
+docker build --build-arg NEXT_PUBLIC_API_BASE_URL=YOUR_API_BASE_URL -t deer-flow-web .
 ```
 
 Final, start up a docker container running the web server:

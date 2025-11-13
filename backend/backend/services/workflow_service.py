@@ -19,15 +19,9 @@ from backend.schemas.workflow import (
     WorkflowUpdate,
 )
 from backend.utils.event_utils import broadcast_event
-from backend.workflow_definition import (
-    KEY_STAGE_ID,
-    KEY_STAGE_NAME,
-    PHASE_2_TEMPLATE,
-    PREVIOUS_IN_TASK,
-    TERMINAL_NODE_SUFFIX,
-    WORKFLOW_DEFINITION,
-    NodeType,
-)
+from backend.workflow import DEFAULT_WORKFLOW_SPEC_ID, load_workflow_spec
+from backend.workflow.constants import PREVIOUS_IN_TASK
+from backend.workflow.spec import NodeType, WorkflowSpec
 
 
 def _merge_dependencies(
@@ -65,6 +59,12 @@ def _merge_dependencies(
 class WorkflowService:
     def __init__(self, db: Session):
         self.db = db
+        self._workflow_spec: Optional[WorkflowSpec] = None
+
+    def _get_workflow_spec(self) -> WorkflowSpec:
+        if not self._workflow_spec:
+            self._workflow_spec = load_workflow_spec(DEFAULT_WORKFLOW_SPEC_ID)
+        return self._workflow_spec
 
     def _get_workflow_for_user(self, workflow_id: int, user: User) -> WorkflowInstance:
         """Retrieve a workflow and enforce ownership."""
@@ -182,7 +182,11 @@ class WorkflowService:
         )
         self.db.add(workflow)
         self.db.flush()
-        self._initialize_nodes(workflow)
+        spec = self._get_workflow_spec()
+        if not spec.dynamic_task_templates:
+            logger.warning("Workflow spec has no dynamic templates. Skipping insertion.", workflow_id=node.workflow_instance_id)
+            return False
+        self._initialize_nodes(workflow, spec)
         self.db.commit()
         self.db.refresh(workflow)
         return workflow
@@ -206,29 +210,29 @@ class WorkflowService:
         self.db.commit()
         logger.info("Deleted workflow and associated data", workflow_id=workflow_id)
 
-    def _initialize_nodes(self, workflow: WorkflowInstance):
+    def _initialize_nodes(self, workflow: WorkflowInstance, spec: Optional[WorkflowSpec] = None):
+        spec = spec or self._get_workflow_spec()
         order_index = 0
-        for node_def in WORKFLOW_DEFINITION["structure"]:
-            stage_id = node_def.get(KEY_STAGE_ID)
-            stage_name = node_def.get(KEY_STAGE_NAME)
-            if not stage_id:
-                stage_id = node_def["id"].rsplit(".", 1)[0]
-            if not stage_name:
-                stage_name = node_def["name"]
+        for node_spec in spec.structure:
+            stage_id = node_spec.stage_id or node_spec.id.rsplit(".", 1)[0]
+            stage_name = node_spec.stage_name or node_spec.name
             node = NodeInstance(
                 workflow_instance_id=workflow.id,
                 user_id=workflow.user_id,
-                definition_id=node_def["id"],
-                name=node_def["name"],
-                node_type=node_def["type"],
-                hitl_mode=node_def["hitl_mode"],
-                dependencies=node_def.get("dependencies", {}),
-                external_inputs=node_def.get("external_inputs", []),
+                definition_id=node_spec.id,
+                name=node_spec.name,
+                node_type=node_spec.type,
+                hitl_mode=node_spec.hitl_mode,
+                handler_type=node_spec.handler_type,
+                sca_selection_mode=node_spec.sca_selection_mode,
+                export_config=dict(node_spec.export_config or {}),
+                dependencies=dict(node_spec.dependencies or {}),
+                external_inputs=list(node_spec.external_inputs or []),
                 order_index=order_index,
-                phase_id=node_def["phase"],
+                phase_id=node_spec.phase,
                 stage_id=stage_id,
                 stage_name=stage_name,
-                task_group_id=node_def.get("task_group_id"),
+                task_group_id=node_spec.task_group_id,
                 current_stage=ExecutionStage.NOT_STARTED,
             )
             self.db.add(node)
@@ -283,11 +287,12 @@ class WorkflowService:
             )
             return False
 
+        spec = self._get_workflow_spec()
         insertion_index = node.order_index + 1
-        total_nodes_to_insert = len(taskbook) * len(PHASE_2_TEMPLATE)
+        total_nodes_to_insert = len(taskbook) * len(spec.dynamic_task_templates)
         self._shift_subsequent_nodes(node.workflow_instance_id, insertion_index, total_nodes_to_insert)
-        new_phase2_nodes = self._insert_dynamic_tasks(node.workflow_instance_id, insertion_index, taskbook)
-        self._update_phase3_dependencies(node.workflow_instance_id, new_phase2_nodes)
+        new_phase2_nodes = self._insert_dynamic_tasks(node.workflow_instance_id, insertion_index, taskbook, spec)
+        self._update_phase3_dependencies(node.workflow_instance_id, new_phase2_nodes, spec)
         self.db.flush()
 
         return True
@@ -304,6 +309,7 @@ class WorkflowService:
         workflow_id: int,
         start_index: int,
         taskbook: List[Dict[str, Any]],
+        spec: WorkflowSpec,
     ) -> List[NodeInstance]:
         workflow = self.db.query(WorkflowInstance).get(workflow_id)
         if not workflow:
@@ -326,17 +332,17 @@ class WorkflowService:
                 fields_list = required_fields if isinstance(required_fields, list) else [required_fields]
 
                 if upstream_id in defined_task_ids:
-                    resolved_id = f"{upstream_id}{TERMINAL_NODE_SUFFIX}"
+                    resolved_id = f"{upstream_id}{spec.terminal_node_suffix}"
                     resolved_task_specific_inputs[resolved_id] = list(fields_list)
                 else:
                     resolved_task_specific_inputs[upstream_id] = list(fields_list)
 
-            for id_suffix, template in PHASE_2_TEMPLATE.items():
+            for id_suffix, template in spec.dynamic_task_templates.items():
                 definition_id = f"{task_id}{id_suffix}"
-                name = f"[{task_id}] {template['name_prefix']}"
+                name = f"[{task_id}] {template.name_prefix}"
                 stage_suffix = id_suffix.rsplit(".", 1)[0] if "." in id_suffix else id_suffix
                 stage_id = f"{task_id}{stage_suffix}"
-                stage_name_prefix = template.get("stage_name_prefix") or "Execution"
+                stage_name_prefix = template.stage_name_prefix or "Execution"
                 stage_name = f"[{task_id}] {stage_name_prefix}"
                 dependencies = {
                     "1.1.1": {"required_fields": ["Formal Problem Restatement"]},
@@ -345,7 +351,7 @@ class WorkflowService:
 
                 dependencies = _merge_dependencies(dependencies, resolved_task_specific_inputs)
 
-                template_inputs = template.get("inputs", {})
+                template_inputs = template.inputs or {}
                 intra_task_deps: Dict[str, List[str]] = {}
                 for upstream_def_id, required_fields in template_inputs.items():
                     fields_list = list(required_fields)
@@ -358,7 +364,7 @@ class WorkflowService:
                 dependencies = _merge_dependencies(dependencies, intra_task_deps)
 
                 node_external_inputs: List[str] = []
-                if template.get("inherits_external_inputs"):
+                if template.inherits_external_inputs:
                     node_external_inputs = list(task_external_inputs)
 
                 new_node = NodeInstance(
@@ -366,8 +372,11 @@ class WorkflowService:
                     user_id=workflow.user_id,
                     definition_id=definition_id,
                     name=name,
-                    node_type=template["type"],
-                    hitl_mode=template["hitl_mode"],
+                    node_type=template.type,
+                    hitl_mode=template.hitl_mode,
+                    handler_type=template.handler_type,
+                    sca_selection_mode=template.sca_selection_mode,
+                    export_config=dict(template.export_config or {}),
                     dependencies=dependencies,
                     external_inputs=node_external_inputs,
                     order_index=current_index,
@@ -385,7 +394,7 @@ class WorkflowService:
         self.db.flush()
         return all_new_nodes
 
-    def _update_phase3_dependencies(self, workflow_id: int, phase2_nodes: List[NodeInstance]):
+    def _update_phase3_dependencies(self, workflow_id: int, phase2_nodes: List[NodeInstance], spec: WorkflowSpec):
         """Ensure node 3.1.1 depends on outputs from each Phase 2 robustness node."""
         node_311 = (
             self.db.query(NodeInstance)
@@ -396,17 +405,17 @@ class WorkflowService:
             return
         current_deps = node_311.dependencies or {}
         new_deps_to_merge: Dict[str, List[str]] = {}
-        terminal_template = PHASE_2_TEMPLATE.get(TERMINAL_NODE_SUFFIX)
+        terminal_template = spec.dynamic_task_templates.get(spec.terminal_node_suffix)
         if not terminal_template:
             logger.error(
                 "Terminal node template not found in PHASE_2_TEMPLATE",
-                terminal_suffix=TERMINAL_NODE_SUFFIX,
+                terminal_suffix=spec.terminal_node_suffix,
             )
             return
 
         for p2_node in phase2_nodes:
-            if p2_node.definition_id.endswith(TERMINAL_NODE_SUFFIX):
-                required_fields = list(terminal_template.get("outputs", []))
+            if p2_node.definition_id.endswith(spec.terminal_node_suffix):
+                required_fields = list(terminal_template.outputs or [])
                 new_deps_to_merge[p2_node.definition_id] = required_fields
 
         node_311.dependencies = _merge_dependencies(current_deps, new_deps_to_merge)

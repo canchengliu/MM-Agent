@@ -2,7 +2,6 @@ import datetime
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
-from pydantic import ValidationError
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -10,29 +9,22 @@ from backend.exceptions import InvalidStateException
 from backend.models.user import User
 from backend.models.workflow import ExecutionStage, NodeInstance, NodeStatus, NodeVersion, VersionSource, WorkflowStatus
 from backend.schemas.hitl import (
-    Adjudication,
     AdjudicationDecision,
     HITLActionType,
     HITLSubmission,
 )
+from backend.services.execution_engine.handlers.registry import get_handler_class
 from backend.services.node_service import NodeService
-from backend.workflow_definition import (
-    HITLMode,
-    KEY_ANALYSIS,
-    KEY_CANDIDATES,
-    KEY_CRITIQUES,
-    KEY_ID,
-    KEY_PRIMARY_ARTIFACT,
-    KEY_SCA_OUTPUT,
-    KEY_SELECTED_ITEM,
-    KEY_SELECTED_ITEMS,
-    NodeType,
-)
+from backend.workflow.spec import HITLMode
 
 class HITLService:
     def __init__(self, db: Session, node_service: NodeService):
         self.db = db
         self.node_service = node_service
+
+    def _get_handler_for_node(self, node: NodeInstance):
+        handler_cls = get_handler_class(node.handler_type)
+        return handler_cls(None, node)
 
     async def process_submission(
         self, node_id: int, submission: HITLSubmission, user: User
@@ -129,40 +121,8 @@ class HITLService:
 
     def _validate_hitl_integrity(self, node: NodeInstance, interaction_data: Optional[Dict[str, Any]]):
         raw_output = node.temporary_result.output_data
-        if node.hitl_mode == HITLMode.SCA:
-            if not interaction_data or "selected_ids" not in interaction_data:
-                raise InvalidStateException("SCA requires 'selected_ids' in interaction_data.")
-            selected_ids = interaction_data["selected_ids"]
-            if not isinstance(selected_ids, list) or len(selected_ids) < 1:
-                raise InvalidStateException("SCA requires at least one selection.")
-
-            single_selection_nodes = {"1.1.2", "3.1.1"}
-            requires_single_selection = node.definition_id.endswith(".2.1.1") or node.definition_id in single_selection_nodes
-            if requires_single_selection and len(selected_ids) != 1:
-                raise InvalidStateException(f"Node {node.definition_id} requires exactly one selection.")
-
-            candidates = raw_output.get(KEY_CANDIDATES, [])
-            available_ids = {c.get(KEY_ID) for c in candidates if c.get(KEY_ID)}
-            if not set(selected_ids).issubset(available_ids):
-                raise InvalidStateException("Submitted 'selected_ids' contain invalid IDs.")
-
-        if node.hitl_mode == HITLMode.AVL:
-            critiques = raw_output.get(KEY_CRITIQUES, [])
-            if not critiques:
-                return
-            if not interaction_data or "adjudication" not in interaction_data:
-                raise InvalidStateException("AVL requires 'adjudication' data when critiques are present.")
-            adjudication_data_list = interaction_data["adjudication"]
-            try:
-                adjudications = [Adjudication(**data) for data in adjudication_data_list]
-            except ValidationError as exc:
-                raise InvalidStateException(f"Invalid adjudication data structure: {exc}")
-            if len(adjudications) != len(critiques):
-                raise InvalidStateException("Adjudication data must be provided for all active critiques.")
-            available_ids = {c.get(KEY_ID) for c in critiques if c.get(KEY_ID)}
-            submitted_ids = {a.critique_id for a in adjudications}
-            if submitted_ids != available_ids:
-                raise InvalidStateException("Mismatch between active critiques and adjudication decisions.")
+        handler = self._get_handler_for_node(node)
+        handler.validate_hitl_integrity(raw_output, interaction_data)
 
     def _determine_final_output(
         self,
@@ -170,51 +130,8 @@ class HITLService:
         raw_output: Dict[str, Any],
         interaction_data: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        if node.hitl_mode == HITLMode.SCA:
-            if not interaction_data or "selected_ids" not in interaction_data:
-                raise InvalidStateException("SCA output determination requires 'selected_ids'.")
-            selected_ids = set(interaction_data["selected_ids"])
-            candidates = raw_output.get(KEY_CANDIDATES, [])
-            selected_items = [candidate for candidate in candidates if candidate.get(KEY_ID) in selected_ids]
-
-            single_selection_nodes = {"1.1.2", "3.1.1"}
-            is_single_selection = node.definition_id.endswith(".2.1.1") or node.definition_id in single_selection_nodes
-
-            selected_item = None
-            if is_single_selection:
-                if len(selected_items) == 1:
-                    selected_item = selected_items[0]
-                else:
-                    raise InvalidStateException(
-                        f"Internal Error: Expected single selection for node {node.definition_id}, "
-                        f"found {len(selected_items)}."
-                    )
-
-            sca_output_wrapper = {
-                KEY_SELECTED_ITEM: selected_item,
-                KEY_SELECTED_ITEMS: selected_items,
-            }
-
-            if node.definition_id in {"1.1.2", "3.1.1"}:
-                if selected_item:
-                    final_output = selected_item.copy()
-                    final_output[KEY_SCA_OUTPUT] = sca_output_wrapper
-                    return final_output
-                raise InvalidStateException(f"Internal Error: Failed to find selected item for {node.definition_id}.")
-
-            final_output = {}
-            for key, value in raw_output.items():
-                if key not in [KEY_CANDIDATES, KEY_ANALYSIS]:
-                    final_output[key] = value
-            final_output[KEY_SCA_OUTPUT] = sca_output_wrapper
-            return final_output
-
-        if node.hitl_mode in [HITLMode.AVL, HITLMode.VARL]:
-            if KEY_PRIMARY_ARTIFACT in raw_output:
-                return raw_output[KEY_PRIMARY_ARTIFACT]
-            return raw_output
-
-        return raw_output
+        handler = self._get_handler_for_node(node)
+        return handler.determine_final_output(raw_output, interaction_data)
 
     async def _reject_and_retry(self, node: NodeInstance, feedback: Optional[str], user: User):
         if not feedback:

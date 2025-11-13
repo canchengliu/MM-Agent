@@ -11,8 +11,6 @@ export const env = createEnv({
    */
   server: {
     NODE_ENV: z.enum(["development", "test", "production"]),
-    AMPLITUDE_API_KEY: z.string().optional(),
-    GITHUB_OAUTH_TOKEN: z.string().optional(),
   },
 
   /**
@@ -21,9 +19,12 @@ export const env = createEnv({
    * `NEXT_PUBLIC_`.
    */
   client: {
-    NEXT_PUBLIC_API_URL: z.string().optional(),
-    NEXT_PUBLIC_STATIC_WEBSITE_ONLY: z.boolean().optional(),
-    NEXT_PUBLIC_MAX_STREAM_BUFFER_SIZE: z.coerce.number().int().positive().optional(),
+    NEXT_PUBLIC_API_BASE_URL: z
+      .string()
+      .url()
+      .optional()
+      .default("http://localhost:8000/api/v1"),
+    NEXT_PUBLIC_WS_URL: z.string().url().optional(),
   },
 
   /**
@@ -32,13 +33,10 @@ export const env = createEnv({
    */
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
-    NEXT_PUBLIC_STATIC_WEBSITE_ONLY:
-      process.env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true",
-    NEXT_PUBLIC_MAX_STREAM_BUFFER_SIZE: process.env.NEXT_PUBLIC_MAX_STREAM_BUFFER_SIZE,
-    AMPLITUDE_API_KEY: process.env.AMPLITUDE_API_KEY,
-    GITHUB_OAUTH_TOKEN: process.env.GITHUB_OAUTH_TOKEN,
+    NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
+    NEXT_PUBLIC_WS_URL: process.env.NEXT_PUBLIC_WS_URL,
   },
+  // Removed Deer-Flow specific variables (AMPLITUDE, GITHUB_OAUTH, STATIC_WEBSITE_ONLY, etc.)
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially
    * useful for Docker builds.

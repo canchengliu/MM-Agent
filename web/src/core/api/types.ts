@@ -6,6 +6,12 @@ interface Option {
   value: string;
 }
 
+// Shared API response shapes
+export interface PaginatedResponse<T> {
+  total: number;
+  items: T[];
+}
+
 // Tool Calls
 
 export interface ToolCall {
