@@ -9,7 +9,7 @@ import { Button } from "~/components/ui/button";
 import type { NodeInstanceRead } from "~/core/models/workflow.model";
 import type { NodeDetailView } from "~/core/models/node.model"; // (Task 22): Import NodeDetailView
 import { useStore } from "~/core/store";
-import { HITLInteractionContext, type HITLInteractionContextType } from "../../hitl/hitl-interaction-manager";
+import { HITLInteractionContext, type HITLInteractionContextType } from "../hitl/hitl-interaction-manager";
 import { NodeStatus } from "~/constants/enums";
 import { ManualEditSaveDialog } from "./manual-edit-save-dialog"; // (Task 22): Import dialog
 

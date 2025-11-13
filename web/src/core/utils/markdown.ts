@@ -73,10 +73,26 @@ export function normalizeMathForEditor(markdown: string): string {
 
 /**
  * Normalize math delimiters for display consumption (react-markdown/remark-math).
+ * Display rendering expects both inline and block formulas to use $$...$$ so they can be parsed
+ * consistently by remark-math/rehype-katex regardless of how the source was authored.
  */
 export function normalizeMathForDisplay(markdown: string): string {
-  // The normalization logic is generally the same for display and editing.
-  return normalizeMathForEditor(markdown);
+  let normalized = markdown;
+
+  // Convert display math delimiters (\[...\] and \\[...\\]) → $$...$$
+  normalized = normalized
+    .replace(/\\\\\[([\s\S]*?)\\\\\]/g, (_match, content) => `$$${content}$$`)
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_match, content) => `$$${content}$$`);
+
+  // Convert inline math delimiters (\(...\) and \\(...\\)) → $$...$$
+  normalized = normalized
+    .replace(/\\\\\(([\s\S]*?)\\\\\)/g, (_match, content) => `$$${content}$$`)
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_match, content) => `$$${content}$$`);
+
+  // Normalize duplicate backslashes within math contexts
+  normalized = normalizeBackslashesInMath(normalized);
+
+  return normalized;
 }
 
 /**

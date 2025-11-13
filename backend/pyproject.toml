@@ -19,7 +19,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+]
 
 [build-system]
 requires = ["setuptools", "wheel"]

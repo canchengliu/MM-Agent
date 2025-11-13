@@ -1,5 +1,9 @@
+import { enableMapSet } from "immer";
 import { create, type StateCreator } from "zustand";
 import { devtools } from "zustand/middleware";
+
+// Immer does not support Map/Set drafts by default; enable plugin globally for workflow slices.
+enableMapSet();
 
 import { createAuthSlice, type AuthSlice } from "./slices/auth.slice";
 import {

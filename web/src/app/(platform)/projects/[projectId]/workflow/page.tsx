@@ -3,11 +3,12 @@ import { notFound } from "next/navigation";
 import { ProjectWorkflowContainer } from "./components/project-workflow-container";
 
 interface ProjectWorkflowPageProps {
-  params: { projectId: string };
+  params: Promise<{ projectId: string }>;
 }
 
-export default function ProjectWorkflowPage({ params }: ProjectWorkflowPageProps) {
-  const numericProjectId = Number(params.projectId);
+export default async function ProjectWorkflowPage({ params }: ProjectWorkflowPageProps) {
+  const resolvedParams = await params;
+  const numericProjectId = Number(resolvedParams.projectId);
   if (!Number.isInteger(numericProjectId) || numericProjectId <= 0) {
     notFound();
   }

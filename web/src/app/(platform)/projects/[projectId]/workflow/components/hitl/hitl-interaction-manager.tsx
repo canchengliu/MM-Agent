@@ -16,7 +16,7 @@ import { RejectFeedbackDialog } from "./reject-feedback-dialog";
 import { DiscardConfirmationDialog } from "./discard-confirmation-dialog";
 
 // Context for communication between HITL Zone (B2.4) and Action Footer (B3)
-interface HITLInteractionContextType {
+export interface HITLInteractionContextType {
   node: NodeInstanceRead;
   pendingResult: TemporaryExecutionRead | null;
   // State managed by the panels (SCA, AVL)
@@ -249,4 +249,3 @@ export function HITLPanelRenderer() {
       return <VARLPanel outputData={outputData} />;
   }
 }
-

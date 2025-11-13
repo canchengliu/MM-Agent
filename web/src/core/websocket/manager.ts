@@ -106,7 +106,7 @@ class WebSocketManager {
     // (Implementation remains as provided in context - creates WebSocket instance)
     if (!this.workflowId || !this.token || this.intentionalDisconnect) return;
 
-    const path = `/ws/${this.workflowId}?token=${this.token}`;
+    const path = `/workflows/${this.workflowId}/ws?token=${this.token}`;
 
     try {
       const url = resolveWebSocketURL(path);

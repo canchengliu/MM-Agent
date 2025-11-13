@@ -3,11 +3,12 @@ import { notFound } from "next/navigation";
 import { ProjectConfigContainer } from "./components/project-config-container";
 
 interface ProjectConfigPageProps {
-  params: { projectId: string };
+  params: Promise<{ projectId: string }>;
 }
 
-export default function ProjectConfigPage({ params }: ProjectConfigPageProps) {
-  const numericProjectId = Number(params.projectId);
+export default async function ProjectConfigPage({ params }: ProjectConfigPageProps) {
+  const resolvedParams = await params;
+  const numericProjectId = Number(resolvedParams.projectId);
 
   if (!Number.isInteger(numericProjectId) || numericProjectId <= 0) {
     notFound();

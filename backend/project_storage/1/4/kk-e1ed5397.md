@@ -11,7 +11,6 @@
  - redis.py
  - task_names.py
  - worker.py
- - workflow_definition.py
  - ws_manager.py
 
 ### __init__.py Content:
@@ -114,7 +113,7 @@ class Settings(BaseSettings):
     # --- Security and Authentication (R1, R7.3) ---
     # Security settings are now loaded from the .env file.
     SECRET_KEY: str
-    ENCRYPTION_KEY: str = "R2JofR3Im5x4f8IinLcs3jJ5Hh2R90g6Z_u-d23o1oQ="  # Default for dev if not in .env
+    ENCRYPTION_KEY: str
     # Use alias to match JWT_ALGORITHM in .env file
     ALGORITHM: str = Field(default="HS256", alias="JWT_ALGORITHM")
     ACCESS_TOKEN_EXPIRE_MINUTES: int
@@ -123,12 +122,14 @@ class Settings(BaseSettings):
     @classmethod
     def validate_encryption_key(cls, v: str) -> str:
         """Validate that the encryption key is 32 url-safe base64-encoded bytes."""
+        if not v:
+            raise ValueError("ENCRYPTION_KEY must be set in the environment variables (.env).")
         try:
             # The key must be 32 bytes after decoding.
             if len(base64.urlsafe_b64decode(v)) != 32:
                 raise ValueError("Encryption key must be 32 url-safe base64-encoded bytes.")
         except (ValueError, TypeError) as e:
-            raise ValueError(f"Invalid ENCRYPTION_KEY: {e}") from e
+            raise ValueError(f"Invalid ENCRYPTION_KEY format: {e}") from e
         return v
 
     @model_validator(mode="after")
@@ -146,14 +147,22 @@ class Settings(BaseSettings):
 
         # Otherwise, build it from the component parts.
         path = str(self.REDIS_DB or 0)
-        built_url = RedisDsn.build(
-            scheme=self.REDIS_SCHEME,
-            username=self.REDIS_USERNAME,
-            password=self.REDIS_PASSWORD,
-            host=self.REDIS_HOST,
-            port=self.REDIS_PORT,
-            path=path,
-        )
+        
+        # For password-only authentication (legacy mode), don't include username
+        # Only include username if it's explicitly provided
+        build_kwargs = {
+            "scheme": self.REDIS_SCHEME,
+            "password": self.REDIS_PASSWORD,
+            "host": self.REDIS_HOST,
+            "port": self.REDIS_PORT,
+            "path": path,
+        }
+        
+        # Only add username if it's explicitly set (not None)
+        if self.REDIS_USERNAME is not None:
+            build_kwargs["username"] = self.REDIS_USERNAME
+        
+        built_url = RedisDsn.build(**build_kwargs)
 
         # Set the assembled URL on the settings object.
         self.REDIS_URL = built_url
@@ -217,6 +226,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
 ```
 
 ### database.py Content:
@@ -394,7 +404,7 @@ from backend.database import get_db
 from backend.exceptions import WorkflowException
 from backend.logging_config import setup_logging
 from backend.redis import close_redis_pool, get_redis_pool
-from backend.routers import api_router, auth_router, nodes_router, projects_router, users_router, workflows_router
+from backend.routers import api_router
 from backend.schemas.common import SystemInfo
 from backend.schemas.error import ErrorResponse
 from backend.utils.event_utils import broadcast_from_server
@@ -495,11 +505,7 @@ async def workflow_exception_handler(request: Request, exc: WorkflowException) -
     )
 
 
-app.include_router(auth_router)
-app.include_router(users_router)
-app.include_router(projects_router)
-app.include_router(workflows_router)
-app.include_router(nodes_router)
+# Include the API router which contains all routes with /api/v1 prefix
 app.include_router(api_router)
 
 
@@ -555,7 +561,15 @@ async def get_redis_pool() -> ArqRedis:
 
     global redis_pool
     if redis_pool is None:
-        redis_settings = RedisSettings.from_dsn(str(settings.REDIS_URL))
+        # Use RedisSettings directly to have better control over authentication
+        # This handles password-only authentication (legacy mode) correctly
+        redis_settings = RedisSettings(
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            database=settings.REDIS_DB,
+            password=settings.REDIS_PASSWORD,
+            username=settings.REDIS_USERNAME,  # None for password-only auth
+        )
         redis_pool = await create_pool(redis_settings)
     return redis_pool
 
@@ -586,6 +600,7 @@ TASK_EXECUTE_NODE = "execute_node_task"
 
 from __future__ import annotations
 
+import asyncio
 import traceback
 from typing import Any, Dict
 
@@ -635,6 +650,11 @@ async def execute_node_task(ctx: Dict[str, Any], node_id: int, **kwargs: Any) ->
             node_service = NodeService(db)
             await node_service.execute_in_worker(node, **kwargs)
 
+        except asyncio.CancelledError:
+            logger.warning("Worker task aborted (cancelled by user).")
+            db.close()
+            await handle_cancellation(node_id)
+            raise
         except Exception as exc:
             logger.exception("Worker task for node failed permanently.")
             fail_db = None
@@ -668,6 +688,44 @@ async def execute_node_task(ctx: Dict[str, Any], node_id: int, **kwargs: Any) ->
         logger.info("Worker finished task for node")
 
 
+async def handle_cancellation(node_id: int):
+    """Update the database state when a job is cancelled."""
+    cleanup_db = None
+    try:
+        cleanup_db = SessionLocal()
+        node_to_cancel = cleanup_db.query(NodeInstance).get(node_id)
+        if node_to_cancel and node_to_cancel.status == NodeStatus.EXECUTING:
+            node_to_cancel.status = NodeStatus.CANCELED
+            node_to_cancel.current_stage = ExecutionStage.CANCELED
+            if node_to_cancel.temporary_result:
+                node_to_cancel.temporary_result.error_log = "Execution cancelled by user request (Job Aborted)."
+
+            cleanup_db.commit()
+            node_data = NodeInstanceRead.model_validate(node_to_cancel).model_dump(mode="json")
+            await broadcast_event(
+                node_to_cancel.workflow_instance_id,
+                EventType.NODE_STATUS_UPDATED,
+                node_data,
+                node_id=node_to_cancel.id,
+            )
+        elif node_to_cancel:
+            logger.info(
+                "Job aborted but node {node_id} status was already {status}.",
+                node_id=node_id,
+                status=node_to_cancel.status.value,
+            )
+    except Exception:
+        logger.exception(
+            "CRITICAL: Failed to update node status after cancellation.",
+            failed_node_id=node_id,
+        )
+        if cleanup_db:
+            cleanup_db.rollback()
+    finally:
+        if cleanup_db:
+            cleanup_db.close()
+
+
 async def on_job_failure(ctx: Dict[str, Any], job: Any, exc: BaseException) -> None:
     """Log jobs that exhausted retries for easier inspection."""
 
@@ -683,159 +741,20 @@ class WorkerSettings:
     """arq worker configuration."""
 
     functions = [execute_node_task]
-    redis_settings = RedisSettings.from_dsn(str(settings.REDIS_URL))
+    # Use RedisSettings directly to handle password-only authentication correctly
+    redis_settings = RedisSettings(
+        host=settings.REDIS_HOST,
+        port=settings.REDIS_PORT,
+        database=settings.REDIS_DB,
+        password=settings.REDIS_PASSWORD,
+        username=settings.REDIS_USERNAME,  # None for password-only auth
+    )
     job_timeout = 300  # 5 minutes
     on_job_failure = on_job_failure
+    allow_abort_jobs = True
 
 
 __all__ = ["WorkerSettings", "execute_node_task", "TASK_EXECUTE_NODE"]
-
-```
-
-### workflow_definition.py Content:
-
-```py
-from enum import Enum
-
-
-class NodeType(str, Enum):
-    STANDARD = "Standard"
-    GENERATOR = "Generator"
-
-
-class HITLMode(str, Enum):
-    VARL = "VARL"
-    SCA = "SCA"
-    AVL = "AVL"
-
-# Standardized Keys for Raw Generation
-KEY_PRIMARY_ARTIFACT = "primary_artifact"
-KEY_CANDIDATES = "candidates"
-KEY_ANALYSIS = "comparative_analysis"
-KEY_CRITIQUES = "critiques"
-KEY_ID = "id"
-# Fix 3.1/3.2: Standardized keys for final HITL outputs
-KEY_SCA_OUTPUT = "sca_output_wrapper"
-KEY_SELECTED_ITEM = "selected_item"
-KEY_SELECTED_ITEMS = "selected_items"
-
-# Workflow Structure Constants
-PREVIOUS_IN_TASK = "__PREVIOUS_IN_TASK__"
-# Fix 2.1: Used for resolving inter-task dependencies
-TERMINAL_NODE_SUFFIX = ".2.2.2"
-
-WORKFLOW_DEFINITION = {
-    "name": "O-Award Modeling Workflow",
-    "structure": [
-        {
-            "id": "1.1.1",
-            "name": "Problem Deconstruction and Mathematical Formulation",
-            "phase": "Phase 1: Strategic Analysis & Macro Architecture",
-            "type": NodeType.STANDARD,
-            "hitl_mode": HITLMode.AVL,
-            "dependencies": {},
-            "external_inputs": ["Problem Statement", "Datasets"],
-        },
-        {
-            "id": "1.1.2",
-            "name": "Architecture Design and Task Decomposition",
-            "phase": "Phase 1: Strategic Analysis & Macro Architecture",
-            "type": NodeType.GENERATOR,
-            "hitl_mode": HITLMode.SCA,
-            "dependencies": {
-                "1.1.1": {"required_fields": ["Formal Problem Restatement", "Global Assumption Framework"]}
-            },
-            "external_inputs": [],
-        },
-        {
-            "id": "3.1.1",
-            "name": "Global Logic Integration and Strategic Narrative Construction",
-            "phase": "Phase 3: Global Synthesis & O-Award Paper Forging",
-            "type": NodeType.STANDARD,
-            "hitl_mode": HITLMode.SCA,
-            "dependencies": {
-                "1.1.1": {"required_fields": ["Formal Problem Restatement"]},
-                "1.1.2": {"required_fields": ["Structured Modeling Taskbook"]},
-            },
-            "external_inputs": [],
-        },
-        {
-            "id": "3.1.2",
-            "name": "Paper Forging and Professional Optimization",
-            "phase": "Phase 3: Global Synthesis & O-Award Paper Forging",
-            "type": NodeType.STANDARD,
-            "hitl_mode": HITLMode.VARL,
-            "dependencies": {
-                "3.1.1": {"required_fields": ["Thesis Statement", "Narrative Outline"]}
-            },
-            "external_inputs": [],
-        },
-    ],
-}
-
-PHASE_2_TEMPLATE = {
-    ".2.1.1": {
-        "name_prefix": "Data Insights and Candidate Model Generation",
-        "type": NodeType.STANDARD,
-        "hitl_mode": HITLMode.SCA,
-        "inputs": {},
-        # Output is the standardized SCA wrapper
-        "outputs": [KEY_SCA_OUTPUT],
-        "inherits_external_inputs": True,
-    },
-    ".2.1.2": {
-        "name_prefix": "Mathematical Formulation and Computational Design",
-        "type": NodeType.STANDARD,
-        "hitl_mode": HITLMode.AVL,
-        "inputs": {
-            # Depends on the SCA wrapper from 2.1.1
-            PREVIOUS_IN_TASK: [KEY_SCA_OUTPUT]
-        },
-        # Concrete output keys used by the simulator
-        "outputs": [
-            "math_formulation",
-            "execution_blueprint",
-        ],
-        "inherits_external_inputs": False,
-    },
-    ".2.2.1": {
-        "name_prefix": "Code Generation and Automatic Execution",
-        "type": NodeType.STANDARD,
-        "hitl_mode": HITLMode.VARL,
-        "inputs": {
-            # Depends on the blueprint from 2.1.2
-            PREVIOUS_IN_TASK: ["execution_blueprint"]
-        },
-        # Concrete output keys used by the simulator
-        "outputs": [
-            "raw_results",
-            "vv_data",
-            "sensitivity_data"
-        ],
-        "inherits_external_inputs": True,
-    },
-    # This definition corresponds to TERMINAL_NODE_SUFFIX
-    TERMINAL_NODE_SUFFIX: {
-        "name_prefix": "Robustness Analysis and Strategic Visualization",
-        "type": NodeType.STANDARD,
-        "hitl_mode": HITLMode.SCA,
-        "inputs": {
-            # Depends on the data emitted by 2.2.1
-            PREVIOUS_IN_TASK: [
-                "raw_results",
-                "vv_data",
-                "sensitivity_data"
-            ]
-        },
-        # Concrete output keys used by the simulator, plus the SCA wrapper
-        "outputs": [
-            KEY_SCA_OUTPUT,
-            "vv_report",
-            "key_output_doc",
-        ],
-        "inherits_external_inputs": False,
-    },
-}
 
 ```
 
@@ -850,952 +769,91 @@ from loguru import logger
 
 
 class ConnectionManager:
-    """Tracks active WebSocket connections grouped by workflow instance."""
+    """
+    Manages active WebSocket connections for the current process.
+
+    This manager is designed to be process-local. It maintains a dictionary of active
+    WebSocket connections, mapping a workflow_id to a list of clients interested in
+    updates for that workflow.
+
+    **Scalability in a Multi-Process Environment:**
+    This approach is scalable when used with a message broker like Redis Pub/Sub.
+    The overall architecture is as follows:
+    1. An event occurs in the application (e.g., node status update).
+    2. The application publishes this event to a shared Redis channel.
+    3. Each running server process (e.g., each Gunicorn/Uvicorn worker) has a
+       background task subscribed to this Redis channel.
+    4. Upon receiving a message from Redis, the background task in each process
+       calls this manager's `broadcast` method.
+    5. This manager then sends the message to all WebSocket clients *connected to
+       the current process*.
+
+    This way, all clients receive the updates, regardless of which process they
+    are connected to, without needing to share WebSocket objects across processes.
+    The implementation in `main.py`'s `redis_pubsub_listener` follows this
+    correct and scalable pattern.
+    """
 
     def __init__(self):
+        # This dictionary stores connections that exist *only* in the current process.
         self.active_connections: Dict[int, List[WebSocket]] = {}
 
     async def connect(self, workflow_id: int, websocket: WebSocket):
+        """Accepts a new WebSocket connection and adds it to the tracking dictionary."""
         await websocket.accept()
         self.active_connections.setdefault(workflow_id, []).append(websocket)
-        logger.info("WebSocket connected", workflow_id=workflow_id)
+        logger.info(
+            "WebSocket connected and registered for workflow_id={workflow_id}",
+            workflow_id=workflow_id,
+        )
 
     def disconnect(self, workflow_id: int, websocket: WebSocket):
+        """Removes a WebSocket connection from the tracking dictionary."""
         connections = self.active_connections.get(workflow_id, [])
         try:
             connections.remove(websocket)
         except ValueError:
+            # This can happen if the disconnect logic is called multiple times
+            # or on a connection that was never fully registered. It's safe to ignore.
             pass
+
+        # If no connections are left for this workflow, clean up the entry to save memory.
         if not connections and workflow_id in self.active_connections:
             del self.active_connections[workflow_id]
-        logger.info("WebSocket disconnected", workflow_id=workflow_id)
+
+        logger.info(
+            "WebSocket disconnected for workflow_id={workflow_id}",
+            workflow_id=workflow_id,
+        )
 
     async def broadcast(self, workflow_id: int, message: Dict):
+        """
+        Broadcasts a message to all clients connected to this process for a specific workflow.
+
+        Note: This method only sends messages to clients managed by this specific
+        server process. It relies on an external pub/sub system to be called in all
+        processes for a full, application-wide broadcast.
+        """
         connections = self.active_connections.get(workflow_id)
         if not connections:
             return
 
         payload = json.dumps(message, default=str)
+        # Iterate over a copy of the list in case the list is modified during iteration
+        # by a disconnect call, which would otherwise raise a RuntimeError.
         for connection in connections[:]:
             try:
                 await connection.send_text(payload)
-            except Exception as exc:  # Connection already closed
-                logger.warning("Failed to send WebSocket message", workflow_id=workflow_id, error=str(exc))
+            except Exception as exc:  # Handles cases where the connection is already closed.
+                logger.warning(
+                    "Failed to send WebSocket message, disconnecting client.",
+                    workflow_id=workflow_id,
+                    error=str(exc),
+                )
                 self.disconnect(workflow_id, connection)
 
 
 manager = ConnectionManager()
-
-```
-
-    ## alembic
-     - __init__.py
-     - env.py
-     - script.py.mako
-
-### alembic/__init__.py Content:
-
-```py
-# This file is intentionally left empty.
-
-```
-
-### alembic/env.py Content:
-
-```py
-"""Alembic environment configuration with SQLite batch-mode support."""
-
-import os
-import sys
-from logging.config import fileConfig
-
-from alembic import context
-from sqlalchemy import engine_from_config, pool
-
-# --- START: Application Integration ---
-# Allow Alembic to import from the project package.
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-
-from backend.config import settings
-from backend.database import Base
-from backend.models import *  # noqa: F401,F403 - needed for metadata population
-
-# --- END: Application Integration ---
-
-# Alembic Config object, provides access to the values within the .ini file.
-config = context.config
-
-# --- START: Configuration Update ---
-# Ensure Alembic uses the same database URL as the application settings.
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
-# --- END: Configuration Update ---
-
-# Interpret the config file for Python logging.
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
-
-# --- START: Model Metadata ---
-target_metadata = Base.metadata
-# --- END: Model Metadata ---
-
-
-def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode."""
-    url = config.get_main_option("sqlalchemy.url")
-    render_as_batch = url.startswith("sqlite")
-
-    context.configure(
-        url=url,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-        render_as_batch=render_as_batch,
-    )
-
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-
-    with connectable.connect() as connection:
-        render_as_batch = connection.dialect.name == "sqlite"
-
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            render_as_batch=render_as_batch,
-        )
-
-        with context.begin_transaction():
-            context.run_migrations()
-
-
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
-
-```
-
-### alembic/script.py.mako Content:
-
-```mako
-"""${message}
-
-Revision ID: ${up_revision}
-Revises: ${down_revision | repr}
-Create Date: ${create_date}
-
-"""
-from alembic import op
-import sqlalchemy as sa
-${imports if imports else ""}
-
-# revision identifiers, used by Alembic.
-revision = ${repr(up_revision)}
-down_revision = ${repr(down_revision)}
-branch_labels = ${repr(branch_labels)}
-depends_on = ${repr(depends_on)}
-
-
-def upgrade() -> None:
-    ${upgrades if upgrades else "pass"}
-
-
-def downgrade() -> None:
-    ${downgrades if downgrades else "pass"}
-
-```
-
-        ## versions
-         - 3a5b6c7d8e9f_update_workflow_models_for_multitenancy.py
-         - __init__.py
-         - a9c8b7d6e5f4_add_project_and_file_models.py
-         - b83f6d2e1c4a_normalize_enum_values.py
-         - d78b8a3e7d5e_add_user_and_usersettings_models.py
-         - f8a3a2a1b0c9_initial_migration.py
-
-### alembic/versions/3a5b6c7d8e9f_update_workflow_models_for_multitenancy.py Content:
-
-```py
-"""Update workflow models for multitenancy and manual editing
-
-Revision ID: 3a5b6c7d8e9f
-Revises: a9c8b7d6e5f4
-Create Date: 2024-05-23 09:00:00.000000
-
-"""
-from alembic import op
-import sqlalchemy as sa
-
-
-# revision identifiers, used by Alembic.
-revision = '3a5b6c7d8e9f'
-down_revision = 'a9c8b7d6e5f4'
-branch_labels = None
-depends_on = None
-
-# Define Enum type for database operations
-version_source_enum = sa.Enum('AI_GENERATED', 'MANUALLY_EDITED', name='versionsource')
-
-
-def upgrade() -> None:
-    # ### commands auto generated by Alembic - please adjust! ###
-    
-    # Create the new enum type in the database before using it in a column.
-    version_source_enum.create(op.get_bind(), checkfirst=False)
-
-    with op.batch_alter_table('node_versions', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('source', version_source_enum, server_default='AI_GENERATED', nullable=False))
-        batch_op.add_column(sa.Column('based_on_version_id', sa.Integer(), nullable=True))
-        batch_op.create_foreign_key(
-            batch_op.f('fk_node_versions_based_on_version_id_node_versions'), 
-            'node_versions', ['based_on_version_id'], ['id']
-        )
-
-    with op.batch_alter_table('node_instances', schema=None) as batch_op:
-        # Add the new user_id column as non-nullable, enforcing data integrity for new records.
-        batch_op.add_column(sa.Column('user_id', sa.Integer(), nullable=False))
-        batch_op.create_index(batch_op.f('ix_node_instances_user_id'), ['user_id'], unique=False)
-        batch_op.create_foreign_key(
-            batch_op.f('fk_node_instances_user_id_users'), 
-            'users', ['user_id'], ['id']
-        )
-
-    with op.batch_alter_table('workflow_instances', schema=None) as batch_op:
-        # Add the new user_id column as non-nullable.
-        batch_op.add_column(sa.Column('user_id', sa.Integer(), nullable=False))
-        # Alter the existing project_id column to be non-nullable, completing the data model refactoring.
-        batch_op.alter_column('project_id', existing_type=sa.INTEGER(), nullable=False)
-        batch_op.create_index(batch_op.f('ix_workflow_instances_user_id'), ['user_id'], unique=False)
-        batch_op.create_foreign_key(
-            batch_op.f('fk_workflow_instances_user_id_users'), 
-            'users', ['user_id'], ['id']
-        )
-        batch_op.drop_column('external_data_refs')
-
-    # ### end Alembic commands ###
-
-
-def downgrade() -> None:
-    # ### commands auto generated by Alembic - please adjust! ###
-
-    with op.batch_alter_table('workflow_instances', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('external_data_refs', sa.JSON(), nullable=True))
-        batch_op.drop_constraint(batch_op.f('fk_workflow_instances_user_id_users'), type_='foreignkey')
-        batch_op.drop_index(batch_op.f('ix_workflow_instances_user_id'))
-        batch_op.drop_column('user_id')
-        batch_op.alter_column('project_id', existing_type=sa.INTEGER(), nullable=True)
-
-    with op.batch_alter_table('node_instances', schema=None) as batch_op:
-        batch_op.drop_constraint(batch_op.f('fk_node_instances_user_id_users'), type_='foreignkey')
-        batch_op.drop_index(batch_op.f('ix_node_instances_user_id'))
-        batch_op.drop_column('user_id')
-
-    with op.batch_alter_table('node_versions', schema=None) as batch_op:
-        batch_op.drop_constraint(batch_op.f('fk_node_versions_based_on_version_id_node_versions'), type_='foreignkey')
-        batch_op.drop_column('based_on_version_id')
-        batch_op.drop_column('source')
-
-    # Drop the enum type from the database.
-    version_source_enum.drop(op.get_bind(), checkfirst=False)
-    
-    # ### end Alembic commands ###
-
-```
-
-### alembic/versions/__init__.py Content:
-
-```py
-# This file is intentionally left empty.
-
-```
-
-### alembic/versions/a9c8b7d6e5f4_add_project_and_file_models.py Content:
-
-```py
-"""Add Project, ProjectFile, and HistoricalProblem models
-
-Revision ID: a9c8b7d6e5f4
-Revises: d78b8a3e7d5e
-Create Date: 2024-05-22 11:00:00.000000
-
-"""
-from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.ext.mutable import MutableDict
-
-
-# revision identifiers, used by Alembic.
-revision = "a9c8b7d6e5f4"
-down_revision = "d78b8a3e7d5e"
-branch_labels = None
-depends_on = None
-
-
-project_status_enum = sa.Enum("Configuring", "Running", "Completed", name="projectstatus")
-problem_type_enum = sa.Enum("A", "B", "C", "D", "E", "F", "-", name="problemtype")
-file_role_enum = sa.Enum("Problem Description", "Dataset", "Reference Material", name="filerole")
-
-
-def upgrade() -> None:
-    problem_type_enum_for_projects = problem_type_enum.copy()
-
-    op.create_table(
-        "historical_problems",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("year", sa.Integer(), nullable=False),
-        sa.Column("type", problem_type_enum, nullable=False),
-        sa.Column("name", sa.String(), nullable=False),
-        sa.Column("description_path", sa.String(), nullable=False),
-        sa.Column("dataset_path", sa.String(), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    with op.batch_alter_table("historical_problems", schema=None) as batch_op:
-        batch_op.create_index(batch_op.f("ix_historical_problems_id"), ["id"], unique=False)
-
-    op.create_table(
-        "projects",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("name", sa.String(), nullable=False),
-        sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("status", project_status_enum, nullable=False),
-        sa.Column("problem_type", problem_type_enum_for_projects, nullable=False),
-        sa.Column("configuration_snapshot", MutableDict.as_mutable(sa.JSON()), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-        sa.Column("updated_at", sa.DateTime(), nullable=True),
-        sa.Column("historical_problem_id", sa.Integer(), nullable=True),
-        sa.ForeignKeyConstraint(["historical_problem_id"], ["historical_problems.id"]),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("user_id", "name", name="_user_project_name_uc"),
-    )
-    with op.batch_alter_table("projects", schema=None) as batch_op:
-        batch_op.create_index(batch_op.f("ix_projects_id"), ["id"], unique=False)
-        batch_op.create_index(batch_op.f("ix_projects_name"), ["name"], unique=False)
-        batch_op.create_index(batch_op.f("ix_projects_user_id"), ["user_id"], unique=False)
-
-    op.create_table(
-        "project_files",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("project_id", sa.Integer(), nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("filename", sa.String(), nullable=False),
-        sa.Column("role", file_role_enum, nullable=False),
-        sa.Column("storage_path", sa.String(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-        sa.ForeignKeyConstraint(["project_id"], ["projects.id"]),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("storage_path"),
-    )
-    with op.batch_alter_table("project_files", schema=None) as batch_op:
-        batch_op.create_index(batch_op.f("ix_project_files_id"), ["id"], unique=False)
-        batch_op.create_index(batch_op.f("ix_project_files_project_id"), ["project_id"], unique=False)
-        batch_op.create_index(batch_op.f("ix_project_files_user_id"), ["user_id"], unique=False)
-
-    with op.batch_alter_table("workflow_instances", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("project_id", sa.Integer(), nullable=True))
-        batch_op.create_foreign_key(
-            batch_op.f("fk_workflow_instances_project_id"),
-            "projects",
-            ["project_id"],
-            ["id"],
-        )
-        batch_op.create_unique_constraint(
-            batch_op.f("uq_workflow_instances_project_id"), ["project_id"]
-        )
-
-
-def downgrade() -> None:
-    with op.batch_alter_table("workflow_instances", schema=None) as batch_op:
-        batch_op.drop_constraint(batch_op.f("uq_workflow_instances_project_id"), type_="unique")
-        batch_op.drop_constraint(batch_op.f("fk_workflow_instances_project_id"), type_="foreignkey")
-        batch_op.drop_column("project_id")
-
-    with op.batch_alter_table("project_files", schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f("ix_project_files_user_id"))
-        batch_op.drop_index(batch_op.f("ix_project_files_project_id"))
-        batch_op.drop_index(batch_op.f("ix_project_files_id"))
-    op.drop_table("project_files")
-
-    with op.batch_alter_table("projects", schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f("ix_projects_user_id"))
-        batch_op.drop_index(batch_op.f("ix_projects_name"))
-        batch_op.drop_index(batch_op.f("ix_projects_id"))
-    op.drop_table("projects")
-
-    with op.batch_alter_table("historical_problems", schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f("ix_historical_problems_id"))
-    op.drop_table("historical_problems")
-
-    file_role_enum.drop(op.get_bind(), checkfirst=False)
-    project_status_enum.drop(op.get_bind(), checkfirst=False)
-    problem_type_enum.drop(op.get_bind(), checkfirst=False)
-
-```
-
-### alembic/versions/b83f6d2e1c4a_normalize_enum_values.py Content:
-
-```py
-"""Normalize stored ENUM values to match application definitions.
-
-This migration rebuilds PostgreSQL ENUM types so their labels align with the
-human-readable values defined in the application layer. It also backfills
-existing data to the new representations.
-"""
-
-from collections.abc import Iterable
-from typing import Dict, List, Sequence, Tuple
-
-from alembic import op
-import sqlalchemy as sa
-
-# revision identifiers, used by Alembic.
-revision = "b83f6d2e1c4a"
-down_revision = "3a5b6c7d8e9f"
-branch_labels = None
-depends_on = None
-
-
-EnumSpec = Dict[str, object]
-
-
-ENUM_SPECS: List[EnumSpec] = [
-    {
-        "name": "projectstatus",
-        "columns": [("projects", "status")],
-        "upgrade": {
-            "values": ["Configuring", "Running", "Completed"],
-            "map": {
-                "CONFIGURING": "Configuring",
-                "RUNNING": "Running",
-                "COMPLETED": "Completed",
-                "Configuring": "Configuring",
-                "Running": "Running",
-                "Completed": "Completed",
-            },
-        },
-        "downgrade": {
-            "values": ["CONFIGURING", "RUNNING", "COMPLETED"],
-            "map": {
-                "Configuring": "CONFIGURING",
-                "Running": "RUNNING",
-                "Completed": "COMPLETED",
-                "CONFIGURING": "CONFIGURING",
-                "RUNNING": "RUNNING",
-                "COMPLETED": "COMPLETED",
-            },
-        },
-    },
-    {
-        "name": "workflowstatus",
-        "columns": [("workflow_instances", "status")],
-        "upgrade": {
-            "values": ["Running", "Completed"],
-            "map": {
-                "RUNNING": "Running",
-                "COMPLETED": "Completed",
-                "Running": "Running",
-                "Completed": "Completed",
-            },
-        },
-        "downgrade": {
-            "values": ["RUNNING", "COMPLETED"],
-            "map": {
-                "Running": "RUNNING",
-                "Completed": "COMPLETED",
-                "RUNNING": "RUNNING",
-                "COMPLETED": "COMPLETED",
-            },
-        },
-    },
-    {
-        "name": "nodetype",
-        "columns": [("node_instances", "node_type")],
-        "upgrade": {
-            "values": ["Standard", "Generator"],
-            "map": {
-                "STANDARD": "Standard",
-                "GENERATOR": "Generator",
-                "Standard": "Standard",
-                "Generator": "Generator",
-            },
-        },
-        "downgrade": {
-            "values": ["STANDARD", "GENERATOR"],
-            "map": {
-                "Standard": "STANDARD",
-                "Generator": "GENERATOR",
-                "STANDARD": "STANDARD",
-                "GENERATOR": "GENERATOR",
-            },
-        },
-    },
-    {
-        "name": "nodestatus",
-        "columns": [("node_instances", "status")],
-        "upgrade": {
-            "values": [
-                "Not Started",
-                "Executing",
-                "Awaiting HITL Approval",
-                "Completed",
-                "Failed",
-            ],
-            "map": {
-                "NOT_STARTED": "Not Started",
-                "EXECUTING": "Executing",
-                "AWAITING_HITL_APPROVAL": "Awaiting HITL Approval",
-                "COMPLETED": "Completed",
-                "FAILED": "Failed",
-                "Not Started": "Not Started",
-                "Executing": "Executing",
-                "Awaiting HITL Approval": "Awaiting HITL Approval",
-                "Completed": "Completed",
-                "Failed": "Failed",
-            },
-        },
-        "downgrade": {
-            "values": [
-                "NOT_STARTED",
-                "EXECUTING",
-                "AWAITING_HITL_APPROVAL",
-                "COMPLETED",
-                "FAILED",
-            ],
-            "map": {
-                "Not Started": "NOT_STARTED",
-                "Executing": "EXECUTING",
-                "Awaiting HITL Approval": "AWAITING_HITL_APPROVAL",
-                "Completed": "COMPLETED",
-                "Failed": "FAILED",
-                "NOT_STARTED": "NOT_STARTED",
-                "EXECUTING": "EXECUTING",
-                "AWAITING_HITL_APPROVAL": "AWAITING_HITL_APPROVAL",
-            },
-        },
-    },
-    {
-        "name": "executionstage",
-        "columns": [("node_instances", "current_stage")],
-        "upgrade": {
-            "values": [
-                "Not Started",
-                "Initializing",
-                "Processing",
-                "Generating Outputs",
-                "Awaiting Review",
-                "Completed",
-                "Failed",
-            ],
-            "map": {
-                "NOT_STARTED": "Not Started",
-                "INITIALIZING": "Initializing",
-                "PROCESSING": "Processing",
-                "GENERATING_OUTPUTS": "Generating Outputs",
-                "AWAITING_REVIEW": "Awaiting Review",
-                "COMPLETED": "Completed",
-                "FAILED": "Failed",
-                "Not Started": "Not Started",
-                "Initializing": "Initializing",
-                "Processing": "Processing",
-                "Generating Outputs": "Generating Outputs",
-                "Awaiting Review": "Awaiting Review",
-                "Completed": "Completed",
-                "Failed": "Failed",
-            },
-        },
-        "downgrade": {
-            "values": [
-                "NOT_STARTED",
-                "INITIALIZING",
-                "PROCESSING",
-                "GENERATING_OUTPUTS",
-                "AWAITING_REVIEW",
-                "COMPLETED",
-                "FAILED",
-            ],
-            "map": {
-                "Not Started": "NOT_STARTED",
-                "Initializing": "INITIALIZING",
-                "Processing": "PROCESSING",
-                "Generating Outputs": "GENERATING_OUTPUTS",
-                "Awaiting Review": "AWAITING_REVIEW",
-                "Completed": "COMPLETED",
-                "Failed": "FAILED",
-            },
-        },
-    },
-    {
-        "name": "supportedlanguage",
-        "columns": [("user_settings", "language")],
-        "upgrade": {
-            "values": ["en", "zh"],
-            "map": {"EN": "en", "ZH": "zh", "en": "en", "zh": "zh"},
-        },
-        "downgrade": {
-            "values": ["EN", "ZH"],
-            "map": {"en": "EN", "zh": "ZH", "EN": "EN", "ZH": "ZH"},
-        },
-    },
-    {
-        "name": "interfacetheme",
-        "columns": [("user_settings", "theme")],
-        "upgrade": {
-            "values": ["light", "dark"],
-            "map": {"LIGHT": "light", "DARK": "dark", "light": "light", "dark": "dark"},
-        },
-        "downgrade": {
-            "values": ["LIGHT", "DARK"],
-            "map": {"light": "LIGHT", "dark": "DARK", "LIGHT": "LIGHT", "DARK": "DARK"},
-        },
-    },
-    {
-        "name": "hitlprofile",
-        "columns": [("user_settings", "hitl_profile")],
-        "upgrade": {
-            "values": ["Novice", "Experienced", "Expert"],
-            "map": {
-                "NOVICE": "Novice",
-                "EXPERIENCED": "Experienced",
-                "EXPERT": "Expert",
-                "Novice": "Novice",
-                "Experienced": "Experienced",
-                "Expert": "Expert",
-            },
-        },
-        "downgrade": {
-            "values": ["NOVICE", "EXPERIENCED", "EXPERT"],
-            "map": {
-                "Novice": "NOVICE",
-                "Experienced": "EXPERIENCED",
-                "Expert": "EXPERT",
-            },
-        },
-    },
-    {
-        "name": "thinkingdepth",
-        "columns": [("user_settings", "thinking_depth")],
-        "upgrade": {
-            "values": ["Instant", "Medium", "Heavy"],
-            "map": {
-                "INSTANT": "Instant",
-                "MEDIUM": "Medium",
-                "HEAVY": "Heavy",
-                "Instant": "Instant",
-                "Medium": "Medium",
-                "Heavy": "Heavy",
-            },
-        },
-        "downgrade": {
-            "values": ["INSTANT", "MEDIUM", "HEAVY"],
-            "map": {
-                "Instant": "INSTANT",
-                "Medium": "MEDIUM",
-                "Heavy": "HEAVY",
-            },
-        },
-    },
-]
-
-
-def upgrade() -> None:
-    bind = op.get_bind()
-    if bind.dialect.name != "postgresql":
-        return
-
-    for spec in ENUM_SPECS:
-        _redefine_enum(
-            type_name=spec["name"],
-            new_values=spec["upgrade"]["values"],
-            columns=spec["columns"],
-            value_map=spec["upgrade"]["map"],
-            bind=bind,
-        )
-
-
-def downgrade() -> None:
-    bind = op.get_bind()
-    if bind.dialect.name != "postgresql":
-        return
-
-    # Apply in reverse order to avoid dependency issues.
-    for spec in reversed(ENUM_SPECS):
-        _redefine_enum(
-            type_name=spec["name"],
-            new_values=spec["downgrade"]["values"],
-            columns=spec["columns"],
-            value_map=spec["downgrade"]["map"],
-            bind=bind,
-        )
-
-
-def _redefine_enum(
-    *,
-    type_name: str,
-    new_values: Sequence[str],
-    columns: Iterable[Tuple[str, str]],
-    value_map: Dict[str, str],
-    bind,
-) -> None:
-    """Rebuild a PostgreSQL ENUM type and migrate data."""
-
-    op.execute(f"ALTER TYPE {type_name} RENAME TO {type_name}_old")
-    sa.Enum(*new_values, name=type_name).create(bind, checkfirst=False)
-
-    for table_name, column_name in columns:
-        case_sql = _build_case_expression(column_name, value_map)
-        op.execute(
-            f"""
-            ALTER TABLE {table_name}
-            ALTER COLUMN "{column_name}" TYPE {type_name}
-            USING ({case_sql})::{type_name}
-            """
-        )
-
-    op.execute(f"DROP TYPE {type_name}_old")
-
-
-def _build_case_expression(column_name: str, value_map: Dict[str, str]) -> str:
-    column_expr = f'"{column_name}"'
-    parts = [f"WHEN {column_expr}::text = '{old}' THEN '{new}'" for old, new in value_map.items()]
-    parts.insert(0, f"WHEN {column_expr} IS NULL THEN NULL")
-    parts.append(f"ELSE {column_expr}::text")
-    return f"(CASE {' '.join(parts)} END)"
-
-```
-
-### alembic/versions/d78b8a3e7d5e_add_user_and_usersettings_models.py Content:
-
-```py
-"""Add User and UserSettings models
-
-Revision ID: d78b8a3e7d5e
-Revises: f8a3a2a1b0c9
-Create Date: 2024-05-22 10:45:00.000000
-
-"""
-from alembic import op
-import sqlalchemy as sa
-
-
-# revision identifiers, used by Alembic.
-revision = 'd78b8a3e7d5e'
-down_revision = 'f8a3a2a1b0c9'
-branch_labels = None
-depends_on = None
-
-
-def upgrade() -> None:
-    # ### commands auto generated by Alembic - please adjust! ###
-    op.create_table('users',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('email', sa.String(), nullable=False),
-    sa.Column('hashed_password', sa.String(), nullable=False),
-    sa.Column('display_name', sa.String(), nullable=True),
-    sa.Column('is_active', sa.Boolean(), nullable=False),
-    sa.Column('is_verified', sa.Boolean(), nullable=False),
-    sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.Column('updated_at', sa.DateTime(), nullable=True),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
-    op.create_index(op.f('ix_users_id'), 'users', ['id'], unique=False)
-
-    op.create_table('user_settings',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('user_id', sa.Integer(), nullable=False),
-    sa.Column('language', sa.Enum('EN', 'ZH', name='supportedlanguage'), nullable=False),
-    sa.Column('theme', sa.Enum('LIGHT', 'DARK', name='interfacetheme'), nullable=False),
-    sa.Column('hitl_profile', sa.Enum('NOVICE', 'EXPERIENCED', 'EXPERT', name='hitlprofile'), nullable=False),
-    sa.Column('thinking_depth', sa.Enum('INSTANT', 'MEDIUM', 'HEAVY', name='thinkingdepth'), nullable=False),
-    sa.Column('llm_model_name', sa.String(), nullable=True),
-    sa.Column('llm_base_url', sa.String(), nullable=True),
-    sa.Column('llm_api_key_encrypted', sa.String(), nullable=True),
-    sa.Column('e2b_api_key_encrypted', sa.String(), nullable=True),
-    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('user_id')
-    )
-    op.create_index(op.f('ix_user_settings_id'), 'user_settings', ['id'], unique=False)
-    op.create_index(op.f('ix_user_settings_user_id'), 'user_settings', ['user_id'], unique=True)
-    # ### end Alembic commands ###
-
-
-def downgrade() -> None:
-    # ### commands auto generated by Alembic - please adjust! ###
-    op.drop_index(op.f('ix_user_settings_user_id'), table_name='user_settings')
-    op.drop_index(op.f('ix_user_settings_id'), table_name='user_settings')
-    op.drop_table('user_settings')
-    op.drop_index(op.f('ix_users_id'), table_name='users')
-    op.drop_index(op.f('ix_users_email'), table_name='users')
-    op.drop_table('users')
-    # ### end Alembic commands ###
-
-
-```
-
-### alembic/versions/f8a3a2a1b0c9_initial_migration.py Content:
-
-```py
-"""Initial migration
-
-Revision ID: f8a3a2a1b0c9
-Revises: 
-Create Date: 2024-05-22 10:30:00.000000
-
-"""
-from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.ext.mutable import MutableDict, MutableList
-
-
-# revision identifiers, used by Alembic.
-revision = "f8a3a2a1b0c9"
-down_revision = None
-branch_labels = None
-depends_on = None
-
-
-def upgrade() -> None:
-    # ### commands auto generated by Alembic - please adjust! ###
-    op.create_table(
-        "workflow_instances",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("name", sa.String(), nullable=True),
-        sa.Column("status", sa.Enum("RUNNING", "COMPLETED", name="workflowstatus"), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-        sa.Column("external_data_refs", MutableDict.as_mutable(sa.JSON()), nullable=True),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(op.f("ix_workflow_instances_id"), "workflow_instances", ["id"], unique=False)
-    op.create_index(op.f("ix_workflow_instances_name"), "workflow_instances", ["name"], unique=False)
-
-    op.create_table(
-        "node_instances",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("workflow_instance_id", sa.Integer(), nullable=False),
-        sa.Column("definition_id", sa.String(), nullable=False),
-        sa.Column("name", sa.String(), nullable=False),
-        sa.Column("node_type", sa.Enum("STANDARD", "GENERATOR", name="nodetype"), nullable=False),
-        sa.Column("hitl_mode", sa.Enum("VARL", "SCA", "AVL", name="hitlmode"), nullable=False),
-        sa.Column(
-            "status",
-            sa.Enum(
-                "NOT_STARTED",
-                "EXECUTING",
-                "AWAITING_HITL_APPROVAL",
-                "COMPLETED",
-                "FAILED",
-                name="nodestatus",
-            ),
-            nullable=True,
-        ),
-        sa.Column(
-            "current_stage",
-            sa.Enum(
-                "NOT_STARTED",
-                "INITIALIZING",
-                "PROCESSING",
-                "GENERATING_OUTPUTS",
-                "AWAITING_REVIEW",
-                "COMPLETED",
-                "FAILED",
-                name="executionstage",
-            ),
-            nullable=True,
-        ),
-        sa.Column("order_index", sa.Integer(), nullable=False),
-        sa.Column("active_version_id", sa.Integer(), nullable=True),
-        sa.Column("dependencies", MutableDict.as_mutable(sa.JSON()), nullable=True),
-        sa.Column("external_inputs", MutableList.as_mutable(sa.JSON()), nullable=True),
-        sa.Column("phase_id", sa.String(), nullable=False),
-        sa.Column("task_group_id", sa.String(), nullable=True),
-        sa.ForeignKeyConstraint(["workflow_instance_id"], ["workflow_instances.id"]),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(op.f("ix_node_instances_definition_id"), "node_instances", ["definition_id"], unique=False)
-    op.create_index(op.f("ix_node_instances_id"), "node_instances", ["id"], unique=False)
-    op.create_index(op.f("ix_node_instances_phase_id"), "node_instances", ["phase_id"], unique=False)
-    op.create_index(op.f("ix_node_instances_task_group_id"), "node_instances", ["task_group_id"], unique=False)
-
-    op.create_table(
-        "node_versions",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("node_instance_id", sa.Integer(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-        sa.Column("version_number", sa.Integer(), nullable=False),
-        sa.Column("output_data", MutableDict.as_mutable(sa.JSON()), nullable=True),
-        sa.Column("raw_generated_output", MutableDict.as_mutable(sa.JSON()), nullable=True),
-        sa.Column("input_dependencies", MutableDict.as_mutable(sa.JSON()), nullable=False),
-        sa.Column("hitl_history", MutableList.as_mutable(sa.JSON()), nullable=False),
-        sa.Column("llm_model_name", sa.String(), nullable=False),
-        sa.Column("temperature", sa.Float(), nullable=False),
-        sa.Column("summary", sa.String(length=512), nullable=False),
-        sa.ForeignKeyConstraint(["node_instance_id"], ["node_instances.id"]),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("node_instance_id", "version_number", name="_node_version_uc"),
-    )
-    op.create_index(op.f("ix_node_versions_id"), "node_versions", ["id"], unique=False)
-
-    op.create_table(
-        "temporary_execution_results",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("node_instance_id", sa.Integer(), nullable=False),
-        sa.Column("output_data", MutableDict.as_mutable(sa.JSON()), nullable=True),
-        sa.Column("input_dependencies", MutableDict.as_mutable(sa.JSON()), nullable=False),
-        sa.Column("accumulated_hitl_interactions", MutableList.as_mutable(sa.JSON()), nullable=False),
-        sa.Column("llm_model_name", sa.String(), nullable=False),
-        sa.Column("temperature", sa.Float(), nullable=False),
-        sa.Column("error_log", sa.Text(), nullable=True),
-        sa.ForeignKeyConstraint(["node_instance_id"], ["node_instances.id"]),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("node_instance_id"),
-    )
-    op.create_index(
-        op.f("ix_temporary_execution_results_id"), "temporary_execution_results", ["id"], unique=False
-    )
-
-    # Add the foreign key for the circular dependency after both tables are created
-    op.create_foreign_key(
-        "fk_node_instances_active_version_id_node_versions",
-        "node_instances",
-        "node_versions",
-        ["active_version_id"],
-        ["id"],
-    )
-    # ### end Alembic commands ###
-
-
-def downgrade() -> None:
-    # ### commands auto generated by Alembic - please adjust! ###
-    op.drop_constraint(
-        "fk_node_instances_active_version_id_node_versions", "node_instances", type_="foreignkey"
-    )
-    op.drop_index(op.f("ix_temporary_execution_results_id"), table_name="temporary_execution_results")
-    op.drop_table("temporary_execution_results")
-    op.drop_index(op.f("ix_node_versions_id"), table_name="node_versions")
-    op.drop_table("node_versions")
-    op.drop_index(op.f("ix_node_instances_task_group_id"), table_name="node_instances")
-    op.drop_index(op.f("ix_node_instances_phase_id"), table_name="node_instances")
-    op.drop_index(op.f("ix_node_instances_id"), table_name="node_instances")
-    op.drop_index(op.f("ix_node_instances_definition_id"), table_name="node_instances")
-    op.drop_table("node_instances")
-    op.drop_index(op.f("ix_workflow_instances_name"), table_name="workflow_instances")
-    op.drop_index(op.f("ix_workflow_instances_id"), table_name="workflow_instances")
-    op.drop_table("workflow_instances")
-    # ### end Alembic commands ###
-
 ```
 
     ## auth
@@ -1835,6 +893,7 @@ from jose import ExpiredSignatureError, JWTError, jwt
 from loguru import logger
 from sqlalchemy.orm import Session
 
+from backend.auth.security import TokenType
 from backend.config import settings
 from backend.database import get_db
 from backend.models.user import User
@@ -1852,6 +911,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     """Decode the JWT access token and fetch the corresponding user."""
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("type") != TokenType.ACCESS.value:
+            raise credentials_exception
         user_id_str: Optional[str] = payload.get("sub")
         if user_id_str is None:
             raise credentials_exception
@@ -1898,6 +959,9 @@ async def get_user_from_token(token: str, db: Session) -> Optional[User]:
 
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("type") != TokenType.ACCESS.value:
+            logger.warning("WebSocket auth failed: Invalid token type.")
+            return None
         user_id_str: Optional[str] = payload.get("sub")
         if user_id_str is None:
             logger.warning("WebSocket auth failed: 'sub' claim missing in token.")
@@ -1934,10 +998,12 @@ import hashlib
 import hmac
 import secrets
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Optional, Union
 
 from cryptography.fernet import Fernet
-from jose import jwt
+from fastapi import HTTPException, status
+from jose import ExpiredSignatureError, JWTError, jwt
 
 from backend.config import settings
 
@@ -1946,6 +1012,14 @@ PASSWORD_ITERATIONS = 390_000
 PASSWORD_SALT_BYTES = 16
 
 _fernet = Fernet(settings.ENCRYPTION_KEY)
+
+
+class TokenType(str, Enum):
+    """Defines the purpose of a JWT token."""
+
+    ACCESS = "access"
+    EMAIL_VERIFICATION = "email_verification"
+    PASSWORD_RESET = "password_reset"
 
 
 def _encode_bytes(raw: bytes) -> str:
@@ -2018,13 +1092,48 @@ def decrypt_data(value: Optional[Union[str, bytes]]) -> Optional[str]:
     return plaintext.decode("utf-8")
 
 
-def create_access_token(data: dict) -> str:
-    """Create a signed JWT access token."""
+def create_token(data: dict, token_type: TokenType, expires_delta: Optional[timedelta] = None) -> str:
+    """Create a signed JWT token for various purposes."""
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        if token_type == TokenType.ACCESS:
+            expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        elif token_type == TokenType.EMAIL_VERIFICATION:
+            expire = datetime.utcnow() + timedelta(hours=24)
+        elif token_type == TokenType.PASSWORD_RESET:
+            expire = datetime.utcnow() + timedelta(minutes=15)
+        else:
+            raise ValueError("Unsupported token type")
+
+    to_encode.update({"exp": expire, "type": token_type.value})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
+
+
+def decode_token(token: str, expected_type: TokenType) -> dict:
+    """Decode and validate a JWT token, ensuring it matches the expected type."""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("type") != expected_type.value:
+            raise JWTError("Invalid token type")
+        return payload
+    except ExpiredSignatureError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired",
+        ) from exc
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Could not validate token: {exc}",
+        ) from exc
+
+
+def create_access_token(data: dict) -> str:
+    """Create a signed JWT access token."""
+    return create_token(data, TokenType.ACCESS)
 
 
 __all__ = [
@@ -2033,6 +1142,9 @@ __all__ = [
     "get_password_hash",
     "verify_password",
     "create_access_token",
+    "create_token",
+    "decode_token",
+    "TokenType",
 ]
 
 ```
@@ -2050,10 +1162,16 @@ from typing import Optional
 from loguru import logger
 from sqlalchemy.orm import Session
 
-from backend.auth.security import get_password_hash, verify_password
-from backend.exceptions import InvalidStateException
+from backend.auth.security import (
+    TokenType,
+    create_token,
+    decode_token,
+    get_password_hash,
+    verify_password,
+)
+from backend.exceptions import ForbiddenException, InvalidStateException, WorkflowException
 from backend.models.user import User, UserSettings
-from backend.schemas.user import UserCreate
+from backend.schemas.user import PasswordChange, UserCreate
 
 
 class AuthService:
@@ -2124,22 +1242,263 @@ class AuthService:
             db.rollback()
             logger.exception("Failed to register new user. Transaction rolled back.", email=user_in.email)
             raise
+    def change_password(self, db: Session, user: User, password_change: PasswordChange) -> None:
+        """Change the password for an authenticated user."""
+        if not verify_password(password_change.current_password, user.hashed_password):
+            raise ForbiddenException("Incorrect current password.")
 
-    def verify_email(self) -> None:
-        """
-        (STUB) Business logic for handling email verification.
-        This would typically involve validating a token sent to the user's email.
-        """
-        logger.warning("STUB: Email verification logic is not implemented.")
-        pass
+        new_hashed_password = get_password_hash(password_change.new_password)
+        user.hashed_password = new_hashed_password
+        db.commit()
+        logger.info("Password changed successfully for user {}", user.id)
 
-    def reset_password(self) -> None:
-        """
-        (STUB) Business logic for handling password reset requests.
-        This would involve generating a secure token and sending a reset link.
-        """
-        logger.warning("STUB: Password reset logic is not implemented.")
-        pass
+    def send_verification_email(self, db: Session, user: User) -> None:
+        """Generate a verification token and simulate sending an email."""
+        if user.is_verified:
+            return
+
+        token = create_token(data={"sub": str(user.id)}, token_type=TokenType.EMAIL_VERIFICATION)
+        logger.info("SIMULATION: Sending verification email to {}", user.email)
+        print(f"SIMULATION: Verification Token for {user.email}: {token}")
+
+    def handle_resend_verification(self, db: Session, email: str) -> None:
+        """Handles the request to resend verification."""
+        user = self.get_user_by_email(db, email)
+        if user:
+            self.send_verification_email(db, user)
+        else:
+            logger.info("Resend verification requested for unknown email: {}", email)
+
+    def verify_email(self, db: Session, token: str) -> User:
+        """Verify the user's email using the provided token."""
+        payload = decode_token(token, TokenType.EMAIL_VERIFICATION)
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            raise WorkflowException("Invalid token payload.", status_code=400)
+
+        try:
+            user_id = int(user_id_str)
+        except ValueError as exc:
+            raise WorkflowException("Invalid user ID in token.", status_code=400) from exc
+
+        user = db.get(User, user_id)
+        if not user:
+            raise WorkflowException("User not found.", status_code=404)
+
+        if user.is_verified:
+            return user
+
+        user.is_verified = True
+        db.commit()
+        db.refresh(user)
+        logger.info("Email verified successfully for user {}", user.id)
+        return user
+
+    def initiate_password_reset(self, db: Session, email: str) -> None:
+        """Generate a password reset token and simulate sending an email (R1.3)."""
+        user = self.get_user_by_email(db, email)
+
+        if user and user.is_active:
+            token = create_token(data={"sub": str(user.id)}, token_type=TokenType.PASSWORD_RESET)
+            logger.info("SIMULATION: Sending password reset email to {}", user.email)
+            print(f"SIMULATION: Password Reset Token for {user.email}: {token}")
+        else:
+            logger.info("Password reset requested for email: {}. Silently handling.", email)
+
+    def complete_password_reset(self, db: Session, token: str, new_password: str) -> None:
+        """Verify the reset token and update the user's password (R1.3)."""
+        payload = decode_token(token, TokenType.PASSWORD_RESET)
+        user_id_str = payload.get("sub")
+
+        if not user_id_str:
+            raise WorkflowException("Invalid token payload.", status_code=400)
+
+        try:
+            user_id = int(user_id_str)
+            user = db.get(User, user_id)
+        except (ValueError, TypeError):
+            raise WorkflowException("Invalid or expired token.", status_code=400)
+
+        if not user:
+            raise WorkflowException("Invalid or expired token.", status_code=400)
+
+        if not user.is_active:
+            raise ForbiddenException("Cannot reset password for an inactive account.")
+
+        user.hashed_password = get_password_hash(new_password)
+        db.commit()
+        logger.info("Password reset successfully completed for user {}", user.id)
+
+```
+
+    ## data
+
+        ## workflows
+         - o_award_v1.yaml
+
+### data/workflows/o_award_v1.yaml Content:
+
+```yaml
+id: o_award_v1
+name: O-Award Modeling Workflow
+terminal_node_suffix: ".2.2.2"
+
+dynamic_task_templates:
+  ".2.1.1":
+    name_prefix: "Data Insights and Candidate Model Generation"
+    stage_name_prefix: "Data & Model Generation"
+    type: Standard
+    hitl_mode: SCA
+    inputs: {}
+    outputs:
+      - sca_output_wrapper
+    inherits_external_inputs: true
+    handler_type: GenericSCAHandler
+    sca_selection_mode: Single
+    export_config:
+      handler: intermediate_json
+      behavior:
+        variant: model_candidates
+
+  ".2.1.2":
+    name_prefix: "Mathematical Formulation and Computational Design"
+    stage_name_prefix: "Data & Model Generation"
+    type: Standard
+    hitl_mode: AVL
+    inputs:
+      __PREVIOUS_IN_TASK__:
+        - sca_output_wrapper
+    outputs:
+      - math_formulation
+      - execution_blueprint
+    inherits_external_inputs: false
+    handler_type: GenericAVLHandler
+    export_config:
+      handler: intermediate_json
+      behavior:
+        variant: formulation
+
+  ".2.2.1":
+    name_prefix: "Code Generation and Automatic Execution"
+    stage_name_prefix: "Code & Execution"
+    type: Standard
+    hitl_mode: VARL
+    inputs:
+      __PREVIOUS_IN_TASK__:
+        - execution_blueprint
+    outputs:
+      - raw_results
+      - vv_data
+      - sensitivity_data
+    inherits_external_inputs: true
+    handler_type: CodeExecutionHandler
+    export_config:
+      handler: code_artifacts
+      code_keys:
+        - generated_code.py
+        - execution.log
+        - error.log
+      behavior:
+        include_vv_data: true
+
+  ".2.2.2":
+    name_prefix: "Robustness Analysis and Strategic Visualization"
+    stage_name_prefix: "Code & Execution"
+    type: Standard
+    hitl_mode: SCA
+    inputs:
+      __PREVIOUS_IN_TASK__:
+        - raw_results
+        - vv_data
+        - sensitivity_data
+    outputs:
+      - sca_output_wrapper
+      - vv_report
+      - key_output_doc
+    inherits_external_inputs: false
+    handler_type: GenericSCAHandler
+    sca_selection_mode: Multiple
+    export_config:
+      handler: intermediate_json
+      behavior:
+        variant: visualization
+        visualization_candidates: true
+
+structure:
+  - id: "1.1.1"
+    name: "Problem Deconstruction and Mathematical Formulation"
+    phase: "Phase 1: Strategic Analysis & Macro Architecture"
+    stage_id: "1.1"
+    stage_name: "Strategic Definition"
+    type: Standard
+    hitl_mode: AVL
+    dependencies: {}
+    external_inputs:
+      - Problem Statement
+      - Datasets
+    handler_type: GenericAVLHandler
+    export_config:
+      handler: intermediate_json
+
+  - id: "1.1.2"
+    name: "Architecture Design and Task Decomposition"
+    phase: "Phase 1: Strategic Analysis & Macro Architecture"
+    stage_id: "1.1"
+    stage_name: "Strategic Definition"
+    type: Generator
+    hitl_mode: SCA
+    dependencies:
+      "1.1.1":
+        required_fields:
+          - Formal Problem Restatement
+          - Global Assumption Framework
+    external_inputs: []
+    handler_type: TaskbookGeneratorHandler
+    sca_selection_mode: Single
+    export_config:
+      handler: intermediate_json
+      behavior:
+        variant: taskbook
+    generates_task_id_from: "Structured Modeling Taskbook"
+
+  - id: "3.1.1"
+    name: "Global Logic Integration and Strategic Narrative Construction"
+    phase: "Phase 3: Global Synthesis & O-Award Paper Forging"
+    stage_id: "3.1"
+    stage_name: "Global Logic & Narrative"
+    type: Standard
+    hitl_mode: SCA
+    dependencies:
+      "1.1.1":
+        required_fields:
+          - Formal Problem Restatement
+      "1.1.2":
+        required_fields:
+          - Structured Modeling Taskbook
+    external_inputs: []
+    handler_type: NarrativeSynthesisHandler
+    sca_selection_mode: Single
+    export_config:
+      handler: intermediate_json
+
+  - id: "3.1.2"
+    name: "Paper Forging and Professional Optimization"
+    phase: "Phase 3: Global Synthesis & O-Award Paper Forging"
+    stage_id: "3.1"
+    stage_name: "Global Logic & Narrative"
+    type: Standard
+    hitl_mode: VARL
+    dependencies:
+      "3.1.1":
+        required_fields:
+          - Thesis Statement
+          - Narrative Outline
+    external_inputs: []
+    handler_type: FinalPaperHandler
+    export_config:
+      handler: final_paper
+      paper_key: "Submission-Ready Paper"
+      filename: "O-Award Paper.md"
 
 ```
 
@@ -2525,7 +1884,7 @@ from sqlalchemy.orm import relationship
 
 from backend.database import Base
 from backend.models.enum_utils import enum_values
-from backend.workflow_definition import HITLMode, NodeType
+from backend.workflow.spec import HandlerType, HITLMode, NodeType, SCASelectionMode
 
 
 class WorkflowStatus(str, Enum):
@@ -2572,6 +1931,7 @@ class NodeStatus(str, Enum):
     AWAITING_HITL_APPROVAL = "Awaiting HITL Approval"
     COMPLETED = "Completed"
     FAILED = "Failed"
+    CANCELED = "Canceled"
 
 
 class ExecutionStage(str, Enum):
@@ -2584,6 +1944,7 @@ class ExecutionStage(str, Enum):
     AWAITING_REVIEW = "Awaiting Review"
     COMPLETED = "Completed"
     FAILED = "Failed"
+    CANCELED = "Canceled"
 
 
 class NodeInstance(Base):
@@ -2597,6 +1958,15 @@ class NodeInstance(Base):
     name = Column(String, nullable=False)
     node_type = Column(SAEnum(NodeType, name="nodetype", values_callable=enum_values), nullable=False)
     hitl_mode = Column(SAEnum(HITLMode, name="hitlmode", values_callable=enum_values), nullable=False)
+    handler_type = Column(
+        SAEnum(HandlerType, name="handlertype", values_callable=enum_values),
+        nullable=False,
+    )
+    sca_selection_mode = Column(
+        SAEnum(SCASelectionMode, name="scaselectionmode", values_callable=enum_values),
+        nullable=True,
+    )
+    export_config = Column(MutableDict.as_mutable(JSON), nullable=True)
     status = Column(SAEnum(NodeStatus, name="nodestatus", values_callable=enum_values), default=NodeStatus.NOT_STARTED)
     current_stage = Column(
         SAEnum(ExecutionStage, name="executionstage", values_callable=enum_values),
@@ -2607,6 +1977,8 @@ class NodeInstance(Base):
     dependencies = Column(MutableDict.as_mutable(JSON), nullable=True)
     external_inputs = Column(MutableList.as_mutable(JSON), nullable=True)
     phase_id = Column(String, nullable=False, index=True)
+    stage_id = Column(String, nullable=False, index=True)
+    stage_name = Column(String, nullable=False)
     task_group_id = Column(String, nullable=True, index=True)
 
     workflow = relationship("WorkflowInstance", back_populates="nodes")
@@ -2644,6 +2016,7 @@ class NodeVersion(Base):
     based_on_version_id = Column(Integer, ForeignKey("node_versions.id"), nullable=True)
     output_data = Column(MutableDict.as_mutable(JSON), nullable=True)
     raw_generated_output = Column(MutableDict.as_mutable(JSON), nullable=True)
+    execution_artifacts = Column(MutableDict.as_mutable(JSON), nullable=True)
     # Stores Dict[int, int] (NodeID -> VersionID); MutableDict preserves integer keys.
     input_dependencies = Column(MutableDict.as_mutable(JSON), nullable=False)
     hitl_history = Column(MutableList.as_mutable(JSON), nullable=False)
@@ -2663,6 +2036,7 @@ class TemporaryExecutionResult(Base):
     id = Column(Integer, primary_key=True, index=True)
     node_instance_id = Column(Integer, ForeignKey("node_instances.id"), unique=True, nullable=False)
     output_data = Column(MutableDict.as_mutable(JSON), nullable=True)
+    execution_artifacts = Column(MutableDict.as_mutable(JSON), nullable=True)
     # Stores Dict[int, int] for live execution context.
     input_dependencies = Column(MutableDict.as_mutable(JSON), nullable=False)
     accumulated_hitl_interactions = Column(MutableList.as_mutable(JSON), nullable=False)
@@ -2795,7 +2169,7 @@ from fastapi import APIRouter
 
 from backend.routers.auth import router as auth_router
 from backend.routers.nodes import router as nodes_router
-from backend.routers.projects import router as projects_router
+from backend.routers.projects import library_router, router as projects_router
 from backend.routers.users import router as users_router
 from backend.routers.workflows import router as workflows_router
 
@@ -2803,10 +2177,19 @@ api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth_router)
 api_router.include_router(users_router)
 api_router.include_router(projects_router)
+api_router.include_router(library_router)
 api_router.include_router(workflows_router)
 api_router.include_router(nodes_router)
 
-__all__ = ["api_router", "auth_router", "nodes_router", "projects_router", "users_router", "workflows_router"]
+__all__ = [
+    "api_router",
+    "auth_router",
+    "nodes_router",
+    "projects_router",
+    "users_router",
+    "workflows_router",
+    "library_router",
+]
 
 ```
 
@@ -2823,7 +2206,13 @@ from backend.auth.security import create_access_token
 from backend.auth.service import AuthService
 from backend.database import get_db
 from backend.exceptions import InvalidStateException
-from backend.schemas.auth import Token
+from backend.schemas.auth import (
+    EmailVerificationRequest,
+    PasswordResetCompletion,
+    PasswordResetRequest,
+    ResendVerificationRequest,
+    Token,
+)
 from backend.schemas.user import UserCreate, UserRead
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -2867,17 +2256,54 @@ def register_user(
 ):
     """Register a new user account."""
     try:
-        return auth_service.register_user(db, user_in=user_in)
+        new_user = auth_service.register_user(db, user_in=user_in)
+        auth_service.send_verification_email(db, new_user)
+        return new_user
     except InvalidStateException as exc:
         raise exc
 
 
-@router.post("/reset-password", status_code=status.HTTP_202_ACCEPTED)
-async def request_password_reset(auth_service: AuthService = Depends(get_auth_service)):
-    """Stub endpoint for initiating password reset flow."""
-    auth_service.reset_password()
+@router.post("/verify-email", response_model=UserRead)
+def verify_email(
+    request: EmailVerificationRequest,
+    db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """Verify the user's email address using the provided token."""
+    return auth_service.verify_email(db, request.token)
+
+
+@router.post("/resend-verification-email", status_code=status.HTTP_202_ACCEPTED)
+def resend_verification_email(
+    request: ResendVerificationRequest,
+    db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """Resend the verification email."""
+    auth_service.handle_resend_verification(db, request.email)
+    return {"message": "If the account exists and is not verified, a verification email has been sent."}
+
+
+@router.post("/request-password-reset", status_code=status.HTTP_202_ACCEPTED)
+async def request_password_reset(
+    request: PasswordResetRequest,
+    db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """Initiate the password reset flow."""
+    auth_service.initiate_password_reset(db, request.email)
     return {"message": "If an account with this email exists, a password reset link has been sent."}
 
+
+@router.post("/complete-password-reset", status_code=status.HTTP_200_OK)
+async def complete_password_reset(
+    request: PasswordResetCompletion,
+    db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """Complete the password reset using the token provided via email."""
+    auth_service.complete_password_reset(db, request.token, request.new_password)
+    return {"message": "Password has been reset successfully."}
 
 ```
 
@@ -2918,6 +2344,24 @@ def get_node_details(
     current_user: User = Depends(get_current_active_verified_user),
 ):
     return service.get_node_detail_view(node_id, current_user)
+
+
+@router.post(
+    "/{node_id}/cancel",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=Dict[str, Any],
+    summary="Cancel an EXECUTING node",
+)
+async def cancel_node_execution(
+    node_id: int,
+    service: NodeService = Depends(get_node_service),
+    current_user: User = Depends(get_current_active_verified_user),
+) -> Dict[str, Any]:
+    """
+    Request cancellation of an ongoing node execution.
+    This sends an abort signal to the worker processing the task.
+    """
+    return await service.cancel_execution(node_id, current_user)
 
 
 @router.post(
@@ -3030,6 +2474,7 @@ async def activate_version(
 """API endpoints for project management, file uploads, and workflow initiation."""
 
 import re
+from typing import List
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
@@ -3043,6 +2488,7 @@ from backend.schemas.common import PaginatedResponse
 from backend.schemas.node import NodeInstanceRead
 from backend.schemas.project import (
     HistoricalInitializationRequest,
+    HistoricalProblemRead,
     ProjectCreate,
     ProjectDetailRead,
     ProjectFileRead,
@@ -3052,6 +2498,7 @@ from backend.schemas.project import (
 from backend.services.export_service import ExportService
 from backend.services.project_service import ProjectService
 
+library_router = APIRouter(prefix="/library", tags=["Problem Library"])
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
@@ -3063,6 +2510,15 @@ def get_project_service(db: Session = Depends(get_db)) -> ProjectService:
 def get_export_service(db: Session = Depends(get_db)) -> ExportService:
     """Dependency injector for the ExportService."""
     return ExportService(db)
+
+
+@library_router.get("/historical-problems", response_model=List[HistoricalProblemRead])
+def list_historical_problems(
+    service: ProjectService = Depends(get_project_service),
+) -> List[HistoricalProblemRead]:
+    """List all available historical problems from the library (R3.3)."""
+    problems = service.get_historical_problems()
+    return [HistoricalProblemRead.model_validate(problem) for problem in problems]
 
 
 @router.post("/", response_model=ProjectDetailRead, status_code=status.HTTP_201_CREATED)
@@ -3199,13 +2655,14 @@ async def export_project(
 ```py
 """API endpoints for managing the current user's profile and settings."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from backend.auth.dependencies import get_current_active_verified_user
+from backend.auth.service import AuthService
 from backend.database import get_db
 from backend.models.user import User
-from backend.schemas.user import UserRead, UserSettingsRead, UserSettingsUpdate
+from backend.schemas.user import PasswordChange, UserRead, UserSettingsRead, UserSettingsUpdate
 from backend.services.user_service import UserService
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -3216,10 +2673,27 @@ def get_user_service() -> UserService:
     return UserService()
 
 
+def get_auth_service() -> AuthService:
+    """Provide an AuthService instance."""
+    return AuthService()
+
+
 @router.get("/me", response_model=UserRead)
 async def read_users_me(current_user: User = Depends(get_current_active_verified_user)):
     """Return the authenticated user's profile."""
     return current_user
+
+
+@router.patch("/me/password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_password(
+    password_change: PasswordChange,
+    current_user: User = Depends(get_current_active_verified_user),
+    auth_service: AuthService = Depends(get_auth_service),
+    db: Session = Depends(get_db),
+):
+    """Change the authenticated user's password."""
+    auth_service.change_password(db, current_user, password_change)
+    return None
 
 
 @router.get("/me/settings", response_model=UserSettingsRead)
@@ -3243,6 +2717,7 @@ async def update_user_settings(
     """Update the authenticated user's settings."""
     # The service now handles the update and returns the response model directly.
     return user_service.update_settings(db, user=current_user, settings_in=settings_in)
+
 ```
 
 ### routers/workflows.py Content:
@@ -3277,7 +2752,8 @@ def create_workflow(
     service: WorkflowService = Depends(get_workflow_service),
     current_user: User = Depends(get_current_active_verified_user),
 ):
-    return service.create_workflow(workflow_data, current_user)
+    workflow = service.create_workflow(workflow_data, current_user)
+    return service.get_workflow_instance(workflow.id, current_user)
 
 
 @router.get("/", response_model=PaginatedResponse[WorkflowInstanceRead])
@@ -3307,7 +2783,8 @@ def update_workflow(
     service: WorkflowService = Depends(get_workflow_service),
     current_user: User = Depends(get_current_active_verified_user),
 ):
-    return service.update_workflow(workflow_id, update_data, current_user)
+    service.update_workflow(workflow_id, update_data, current_user)
+    return service.get_workflow_instance(workflow_id, current_user)
 
 
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -3444,7 +2921,7 @@ from backend.schemas.project import (
 from backend.schemas.user import UserCreate, UserRead, UserSettingsRead, UserSettingsUpdate
 
 # Workflow Schemas
-from backend.schemas.workflow import WorkflowCreate, WorkflowInstanceRead, WorkflowUpdate
+from backend.schemas.workflow import PhaseRead, StageRead, WorkflowCreate, WorkflowInstanceRead, WorkflowUpdate
 
 __all__ = [
     # Auth
@@ -3488,6 +2965,8 @@ __all__ = [
     "WorkflowCreate",
     "WorkflowUpdate",
     "WorkflowInstanceRead",
+    "PhaseRead",
+    "StageRead",
 ]
 
 ```
@@ -3499,7 +2978,7 @@ __all__ = [
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, field_validator
 
 
 class Token(BaseModel):
@@ -3515,6 +2994,37 @@ class TokenData(BaseModel):
     # The 'sub' (subject) claim will hold the user ID.
     sub: Optional[str] = None
 
+
+class EmailVerificationRequest(BaseModel):
+    """Schema for verifying email."""
+
+    token: str
+
+
+class ResendVerificationRequest(BaseModel):
+    """Schema for requesting a new verification email."""
+
+    email: EmailStr
+
+
+class PasswordResetRequest(BaseModel):
+    """Schema for initiating password reset."""
+
+    email: EmailStr
+
+
+class PasswordResetCompletion(BaseModel):
+    """Schema for completing the password reset process."""
+
+    token: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password_strength(cls, value: str) -> str:
+        from backend.schemas.user import _validate_password_strength
+
+        return _validate_password_strength(value)
 
 ```
 
@@ -3573,6 +3083,7 @@ class EventType(str, Enum):
     """WebSocket event types."""
 
     NODE_STATUS_UPDATED = "NODE_STATUS_UPDATED"
+    NODE_ACTIVE_VERSION_CHANGED = "NODE_ACTIVE_VERSION_CHANGED"
     WORKFLOW_STRUCTURE_UPDATED = "WORKFLOW_STRUCTURE_UPDATED"
     WORKFLOW_STATUS_UPDATED = "WORKFLOW_STATUS_UPDATED"
 
@@ -3634,7 +3145,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 from backend.models.workflow import ExecutionStage, NodeStatus, VersionSource
-from backend.workflow_definition import HITLMode, NodeType
+from backend.workflow.spec import HandlerType, HITLMode, NodeType, SCASelectionMode
 
 
 class NodeInstanceRead(BaseModel):
@@ -3645,10 +3156,16 @@ class NodeInstanceRead(BaseModel):
     current_stage: ExecutionStage
     node_type: NodeType
     hitl_mode: HITLMode
+    handler_type: HandlerType
+    sca_selection_mode: Optional[SCASelectionMode] = None
+    export_config: Optional[Dict[str, Any]] = None
     order_index: int
     active_version_id: Optional[int]
     phase_id: str
+    stage_id: str
+    stage_name: str
     task_group_id: Optional[str] = None
+    is_stale: bool = False
 
     class Config:
         from_attributes = True
@@ -3659,6 +3176,7 @@ class VersionData(BaseModel):
     based_on_version_id: Optional[int]
     output_data: Optional[Dict[str, Any]]
     raw_generated_output: Optional[Dict[str, Any]]
+    execution_artifacts: Optional[Dict[str, Any]]
     input_dependencies: Dict[int, int]
     hitl_history: List[Dict[str, Any]]
     llm_model_name: str
@@ -3677,6 +3195,7 @@ class NodeVersionRead(VersionData):
 
 class TemporaryExecutionRead(BaseModel):
     output_data: Optional[Dict[str, Any]]
+    execution_artifacts: Optional[Dict[str, Any]]
     accumulated_hitl_interactions: List[Dict[str, Any]]
     error_log: Optional[str]
 
@@ -3769,6 +3288,24 @@ class HistoricalInitializationRequest(BaseModel):
     historical_problem_id: int
 
 
+class HistoricalProblemRead(BaseModel):
+    """Schema for reading historical problem data from the library (R3.3)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    year: int
+    type: ProblemType
+    name: str
+    has_description: bool = Field(..., validation_alias="description_path")
+    has_dataset: bool = Field(..., validation_alias="dataset_path")
+
+    @field_validator("has_description", "has_dataset", mode="before")
+    @classmethod
+    def check_path_exists(cls, value):
+        return bool(value)
+
+
 class ProjectFileRead(BaseModel):
     """Schema for reading project file data."""
 
@@ -3817,6 +3354,13 @@ from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 from backend.models.user import HITLProfile, InterfaceTheme, SupportedLanguage, ThinkingDepth
 
 
+def _validate_password_strength(value: str) -> str:
+    """Enforce minimum password requirements per FRS 1.1."""
+    if len(value) < 8:
+        raise ValueError("Password must be at least 8 characters long.")
+    return value
+
+
 class UserCreate(BaseModel):
     """Schema for creating a new user."""
 
@@ -3827,10 +3371,19 @@ class UserCreate(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password_strength(cls, value: str) -> str:
-        """Enforce minimum password requirements per FRS 1.1."""
-        if len(value) < 8:
-            raise ValueError("Password must be at least 8 characters long.")
-        return value
+        return _validate_password_strength(value)
+
+
+class PasswordChange(BaseModel):
+    """Schema for changing the user's password."""
+
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, value: str) -> str:
+        return _validate_password_strength(value)
 
 
 class UserSettingsUpdate(BaseModel):
@@ -3901,13 +3454,24 @@ class WorkflowUpdate(BaseModel):
     name: Optional[str] = None
 
 
+class StageRead(BaseModel):
+    id: str
+    name: str
+    nodes: List[NodeInstanceRead]
+
+
+class PhaseRead(BaseModel):
+    name: str
+    stages: List[StageRead]
+
+
 class WorkflowInstanceRead(BaseModel):
     id: int
     name: str
     status: WorkflowStatus
     project_id: int
     user_id: int
-    nodes: List[NodeInstanceRead]
+    phases: List[PhaseRead]
 
     class Config:
         from_attributes = True
@@ -3951,6 +3515,9 @@ from loguru import logger
 from sqlalchemy.orm import Session, joinedload
 
 from backend.models import NodeInstance, Project, ProjectFile
+from backend.services.execution_engine.config_resolver import resolve_config
+from backend.services.execution_engine.executor import NodeExecutor
+from backend.services.execution_engine.handlers.registry import get_handler_class
 from backend.services.storage_service import storage_service
 
 
@@ -3973,18 +3540,18 @@ class ExportService:
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             logger.info("Starting export for project '{}'", project.name)
             self._add_original_inputs(zf, project)
-            node_outputs = self._get_node_outputs(project)
-            self._add_structured_outputs(zf, node_outputs)
-            self._add_project_manifest(zf, project, node_outputs)
+            node_data = self._get_node_outputs_with_instances(project)
+            self._add_structured_outputs(zf, project, node_data)
+            self._add_project_manifest(zf, project, node_data)
             logger.info("Project export completed for '{}'", project.name)
 
         zip_buffer.seek(0)
         return zip_buffer.read()
 
-    def _get_node_outputs(self, project: Project) -> Dict[str, Dict[str, Any]]:
-        """Retrieve output data from the active version of each executed node."""
+    def _get_node_outputs_with_instances(self, project: Project) -> List[Dict[str, Any]]:
+        """Retrieve node instances alongside their active version outputs and artifacts."""
         if not project.workflow_instance:
-            return {}
+            return []
 
         nodes_with_active_versions: List[NodeInstance] = (
             self.db.query(NodeInstance)
@@ -3997,18 +3564,21 @@ class ExportService:
             .all()
         )
 
-        outputs: Dict[str, Dict[str, Any]] = {}
+        nodes: List[Dict[str, Any]] = []
         for node in nodes_with_active_versions:
-            if node.active_version and node.active_version.output_data is not None:
-                outputs[node.definition_id] = {
-                    "name": node.name,
-                    "output": node.active_version.output_data,
+            if not node.active_version or node.active_version.output_data is None:
+                continue
+            nodes.append(
+                {
+                    "node_instance": node,
+                    "output_data": node.active_version.output_data,
+                    "execution_artifacts": node.active_version.execution_artifacts,
                     "version_number": node.active_version.version_number,
-                    "order_index": node.order_index,
                 }
+            )
 
-        logger.debug("Gathered outputs for {} nodes.", len(outputs))
-        return outputs
+        logger.debug("Gathered outputs for {} nodes.", len(nodes))
+        return nodes
 
     def _write_content_to_zip(self, zf: zipfile.ZipFile, path: str, data: Any):
         """Serialize content to bytes (if needed) and write it into the archive."""
@@ -4039,75 +3609,46 @@ class ExportService:
                 error_info = f"Error reading file: {p_file.filename}\n{exc}"
                 zf.writestr(f"Original Inputs/{p_file.filename}.error.txt", error_info)
 
-    def _add_structured_outputs(self, zf: zipfile.ZipFile, node_outputs: Dict[str, Dict[str, Any]]):
-        """Dispatch node outputs into their artifact-specific handlers."""
-        sorted_nodes = sorted(node_outputs.items(), key=lambda item: item[1].get("order_index", 999))
-        for def_id, data in sorted_nodes:
-            handled = False
-            handled = self._add_final_paper(zf, def_id, data) or handled
-            handled = self._add_code_artifacts(zf, data) or handled
-            handled = self._add_attachments(zf, data) or handled
-            if not handled and data.get("output"):
-                self._add_intermediate_result(zf, data)
+    def _add_structured_outputs(
+        self,
+        zf: zipfile.ZipFile,
+        project: Project,
+        node_data_list: List[Dict[str, Any]],
+    ):
+        """Delegate export formatting to node handlers."""
+        if not node_data_list:
+            return
 
-    def _add_final_paper(self, zf: zipfile.ZipFile, def_id: str, data: Dict[str, Any]) -> bool:
-        """Capture the final competition paper, if present."""
-        output = data.get("output", {})
-        if def_id == "3.1.2" and "Submission-Ready Paper" in output:
-            paper_content = output["Submission-Ready Paper"]
-            self._write_content_to_zip(zf, "Final Paper/O-Award Paper.md", paper_content)
-            return True
-        return False
+        config = resolve_config(project.configuration_snapshot)
+        temp_executor = NodeExecutor(config=config)
 
-    def _add_code_artifacts(self, zf: zipfile.ZipFile, data: Dict[str, Any]) -> bool:
-        """Capture generated code artifacts for a node."""
-        output_data = data.get("output", {}) or {}
-        node_name = _sanitize_filename(data.get("name", "untitled"))
-        order_index = data.get("order_index", 999)
-        code_keys = ["code", "script", "execution_script"]
-        handled = False
+        for data in node_data_list:
+            node_instance: NodeInstance = data["node_instance"]
+            output_data = data.get("output_data")
+            if not output_data:
+                continue
 
-        for key in code_keys:
-            if key in output_data:
-                path = f"Code Artifacts/{order_index:02d}_{node_name}_{key}.py"
-                self._write_content_to_zip(zf, path, output_data[key])
-                handled = True
-        return handled
+            handler_cls = get_handler_class(node_instance.handler_type)
+            handler = handler_cls(temp_executor, node_instance)
 
-    def _add_attachments(self, zf: zipfile.ZipFile, data: Dict[str, Any]) -> bool:
-        """Capture supporting attachments and visualization data."""
-        output_data = data.get("output", {}) or {}
-        node_name = _sanitize_filename(data.get("name", "untitled"))
-        order_index = data.get("order_index", 999)
-        attachment_keys = ["vv_report", "key_output_doc", "visualization", "plot", "sensitivity_data"]
-        handled = False
+            order_index = node_instance.order_index
+            node_name = _sanitize_filename(node_instance.name)
+            base_path = f"Results/{order_index:02d}_{node_name}/"
 
-        for key in attachment_keys:
-            if key in output_data:
-                path = f"Attachments and Visualizations/{order_index:02d}_{node_name}_{key}.json"
-                self._write_content_to_zip(zf, path, output_data[key])
-                handled = True
-        return handled
-
-    def _add_intermediate_result(self, zf: zipfile.ZipFile, data: Dict[str, Any]):
-        """Persist intermediate JSON results for nodes lacking a specialized handler."""
-        node_name = _sanitize_filename(data.get("name", "untitled"))
-        order_index = data.get("order_index", 999)
-        path = f"Intermediate Results/{order_index:02d}_{node_name}.json"
-        self._write_content_to_zip(zf, path, data["output"])
+            handler.format_export(zf, output_data, base_path, data.get("execution_artifacts"))
 
     def _add_project_manifest(
-        self, zf: zipfile.ZipFile, project: Project, node_outputs: Dict[str, Dict[str, Any]]
+        self, zf: zipfile.ZipFile, project: Project, node_data_list: List[Dict[str, Any]]
     ):
         """Generate the project manifest detailing exported artifacts."""
         exported_nodes_summary = [
             {
-                "definition_id": def_id,
-                "name": data["name"],
-                "order_index": data["order_index"],
+                "definition_id": data["node_instance"].definition_id,
+                "name": data["node_instance"].name,
+                "order_index": data["node_instance"].order_index,
                 "exported_version": data["version_number"],
             }
-            for def_id, data in sorted(node_outputs.items(), key=lambda item: item[1]["order_index"])
+            for data in sorted(node_data_list, key=lambda item: item["node_instance"].order_index)
         ]
 
         manifest = {
@@ -4138,7 +3679,6 @@ import datetime
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
-from pydantic import ValidationError
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -4146,29 +3686,22 @@ from backend.exceptions import InvalidStateException
 from backend.models.user import User
 from backend.models.workflow import ExecutionStage, NodeInstance, NodeStatus, NodeVersion, VersionSource, WorkflowStatus
 from backend.schemas.hitl import (
-    Adjudication,
     AdjudicationDecision,
     HITLActionType,
     HITLSubmission,
 )
+from backend.services.execution_engine.handlers.registry import get_handler_class
 from backend.services.node_service import NodeService
-from backend.workflow_definition import (
-    HITLMode,
-    KEY_ANALYSIS,
-    KEY_CANDIDATES,
-    KEY_CRITIQUES,
-    KEY_ID,
-    KEY_PRIMARY_ARTIFACT,
-    KEY_SCA_OUTPUT,
-    KEY_SELECTED_ITEM,
-    KEY_SELECTED_ITEMS,
-    NodeType,
-)
+from backend.workflow.spec import HITLMode
 
 class HITLService:
     def __init__(self, db: Session, node_service: NodeService):
         self.db = db
         self.node_service = node_service
+
+    def _get_handler_for_node(self, node: NodeInstance):
+        handler_cls = get_handler_class(node.handler_type)
+        return handler_cls(None, node)
 
     async def process_submission(
         self, node_id: int, submission: HITLSubmission, user: User
@@ -4177,7 +3710,7 @@ class HITLService:
         node = self.node_service.get_node_instance(node_id, user=user)
 
         if submission.action == HITLActionType.DISCARD:
-            if node.status in [NodeStatus.AWAITING_HITL_APPROVAL, NodeStatus.FAILED]:
+            if node.status in [NodeStatus.AWAITING_HITL_APPROVAL, NodeStatus.FAILED, NodeStatus.CANCELED]:
                 return await self._discard_execution(node)
             raise InvalidStateException(f"Cannot discard execution in status {node.status}.")
 
@@ -4265,40 +3798,8 @@ class HITLService:
 
     def _validate_hitl_integrity(self, node: NodeInstance, interaction_data: Optional[Dict[str, Any]]):
         raw_output = node.temporary_result.output_data
-        if node.hitl_mode == HITLMode.SCA:
-            if not interaction_data or "selected_ids" not in interaction_data:
-                raise InvalidStateException("SCA requires 'selected_ids' in interaction_data.")
-            selected_ids = interaction_data["selected_ids"]
-            if not isinstance(selected_ids, list) or len(selected_ids) < 1:
-                raise InvalidStateException("SCA requires at least one selection.")
-
-            single_selection_nodes = {"1.1.2", "3.1.1"}
-            requires_single_selection = node.definition_id.endswith(".2.1.1") or node.definition_id in single_selection_nodes
-            if requires_single_selection and len(selected_ids) != 1:
-                raise InvalidStateException(f"Node {node.definition_id} requires exactly one selection.")
-
-            candidates = raw_output.get(KEY_CANDIDATES, [])
-            available_ids = {c.get(KEY_ID) for c in candidates if c.get(KEY_ID)}
-            if not set(selected_ids).issubset(available_ids):
-                raise InvalidStateException("Submitted 'selected_ids' contain invalid IDs.")
-
-        if node.hitl_mode == HITLMode.AVL:
-            critiques = raw_output.get(KEY_CRITIQUES, [])
-            if not critiques:
-                return
-            if not interaction_data or "adjudication" not in interaction_data:
-                raise InvalidStateException("AVL requires 'adjudication' data when critiques are present.")
-            adjudication_data_list = interaction_data["adjudication"]
-            try:
-                adjudications = [Adjudication(**data) for data in adjudication_data_list]
-            except ValidationError as exc:
-                raise InvalidStateException(f"Invalid adjudication data structure: {exc}")
-            if len(adjudications) != len(critiques):
-                raise InvalidStateException("Adjudication data must be provided for all active critiques.")
-            available_ids = {c.get(KEY_ID) for c in critiques if c.get(KEY_ID)}
-            submitted_ids = {a.critique_id for a in adjudications}
-            if submitted_ids != available_ids:
-                raise InvalidStateException("Mismatch between active critiques and adjudication decisions.")
+        handler = self._get_handler_for_node(node)
+        handler.validate_hitl_integrity(raw_output, interaction_data)
 
     def _determine_final_output(
         self,
@@ -4306,51 +3807,8 @@ class HITLService:
         raw_output: Dict[str, Any],
         interaction_data: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        if node.hitl_mode == HITLMode.SCA:
-            if not interaction_data or "selected_ids" not in interaction_data:
-                raise InvalidStateException("SCA output determination requires 'selected_ids'.")
-            selected_ids = set(interaction_data["selected_ids"])
-            candidates = raw_output.get(KEY_CANDIDATES, [])
-            selected_items = [candidate for candidate in candidates if candidate.get(KEY_ID) in selected_ids]
-
-            single_selection_nodes = {"1.1.2", "3.1.1"}
-            is_single_selection = node.definition_id.endswith(".2.1.1") or node.definition_id in single_selection_nodes
-
-            selected_item = None
-            if is_single_selection:
-                if len(selected_items) == 1:
-                    selected_item = selected_items[0]
-                else:
-                    raise InvalidStateException(
-                        f"Internal Error: Expected single selection for node {node.definition_id}, "
-                        f"found {len(selected_items)}."
-                    )
-
-            sca_output_wrapper = {
-                KEY_SELECTED_ITEM: selected_item,
-                KEY_SELECTED_ITEMS: selected_items,
-            }
-
-            if node.definition_id in {"1.1.2", "3.1.1"}:
-                if selected_item:
-                    final_output = selected_item.copy()
-                    final_output[KEY_SCA_OUTPUT] = sca_output_wrapper
-                    return final_output
-                raise InvalidStateException(f"Internal Error: Failed to find selected item for {node.definition_id}.")
-
-            final_output = {}
-            for key, value in raw_output.items():
-                if key not in [KEY_CANDIDATES, KEY_ANALYSIS]:
-                    final_output[key] = value
-            final_output[KEY_SCA_OUTPUT] = sca_output_wrapper
-            return final_output
-
-        if node.hitl_mode in [HITLMode.AVL, HITLMode.VARL]:
-            if KEY_PRIMARY_ARTIFACT in raw_output:
-                return raw_output[KEY_PRIMARY_ARTIFACT]
-            return raw_output
-
-        return raw_output
+        handler = self._get_handler_for_node(node)
+        return handler.determine_final_output(raw_output, interaction_data)
 
     async def _reject_and_retry(self, node: NodeInstance, feedback: Optional[str], user: User):
         if not feedback:
@@ -4372,14 +3830,19 @@ class HITLService:
         self.db.commit()
 
     async def _discard_execution(self, node: NodeInstance) -> Dict[str, Any]:
+        if node.status not in [NodeStatus.AWAITING_HITL_APPROVAL, NodeStatus.FAILED, NodeStatus.CANCELED]:
+            raise InvalidStateException(f"Cannot discard execution in status {node.status}.")
+
         if node.temporary_result:
             self.db.delete(node.temporary_result)
+
         if node.active_version_id:
             node.status = NodeStatus.COMPLETED
             node.current_stage = ExecutionStage.COMPLETED
         else:
             node.status = NodeStatus.NOT_STARTED
             node.current_stage = ExecutionStage.NOT_STARTED
+
         self.db.commit()
         self.db.refresh(node)
         await self.node_service._broadcast_node_update(node)
@@ -4453,6 +3916,8 @@ class HITLService:
             )
             version_source = self._determine_version_source(final_interactions)
             base_version_id = node.active_version_id
+            execution_artifacts = temp_result.execution_artifacts
+
             new_version = NodeVersion(
                 node_instance_id=node.id,
                 version_number=next_version_number,
@@ -4460,6 +3925,7 @@ class HITLService:
                 based_on_version_id=base_version_id,
                 output_data=final_output,
                 raw_generated_output=raw_output,
+                execution_artifacts=execution_artifacts,
                 input_dependencies=temp_result.input_dependencies,
                 hitl_history=final_interactions,
                 llm_model_name=temp_result.llm_model_name,
@@ -4492,14 +3958,21 @@ class HITLService:
 import datetime
 import traceback
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from arq.jobs import Job, JobStatus
 from loguru import logger
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from backend.config import settings
-from backend.exceptions import DependencyException, ForbiddenException, InvalidStateException, NotFoundException
+from backend.exceptions import (
+    DependencyException,
+    ForbiddenException,
+    InvalidStateException,
+    NotFoundException,
+    WorkflowException,
+)
 from backend.models.project import FileRole, ProjectFile
 from backend.models.user import User
 from backend.models.workflow import (
@@ -4523,10 +3996,11 @@ from backend.schemas.node import (
 )
 from backend.services.execution_engine.config_resolver import resolve_config
 from backend.services.execution_engine.executor import NodeExecutor
+from backend.services.execution_engine.results import ExecutionResult
 from backend.services.storage_service import storage_service
 from backend.task_names import TASK_EXECUTE_NODE
 from backend.utils.event_utils import broadcast_event
-from backend.workflow_definition import HITLMode, NodeType
+from backend.workflow.spec import HITLMode, NodeType
 
 
 _INPUT_KEY_TO_ROLE_MAP = {
@@ -4552,18 +4026,95 @@ class NodeService:
             raise ForbiddenException("You do not have permission to access this node.")
         return node
 
-    async def _enqueue_job(self, node_id: int, **kwargs) -> NodeInstance:
-        """Internal helper to enqueue a worker job and update node state."""
+    async def _enqueue_job(self, node: NodeInstance, **kwargs) -> Job:
+        """Internal helper to enqueue a worker job. Assumes DB state is updated and committed."""
         redis = await get_redis_pool()
-        await redis.enqueue_job(TASK_EXECUTE_NODE, node_id=node_id, **kwargs)
+        node_id = node.id
+        job_key = f"executing_node:{node_id}"
 
-        node = self.get_node_instance(node_id)
-        node.status = NodeStatus.EXECUTING
-        node.current_stage = ExecutionStage.INITIALIZING
-        self.db.commit()
-        self.db.refresh(node)
-        await self._broadcast_node_update(node)
-        logger.info("Enqueued job for node", node_id=node_id, job_args=kwargs)
+        try:
+            job = await redis.enqueue_job(TASK_EXECUTE_NODE, node_id=node_id, _job_id=job_key, **kwargs)
+            logger.info(
+                "Enqueued job {job_id} (Key: {job_key}) for node {node_id}",
+                job_id=job.job_id,
+                job_key=job_key,
+                node_id=node_id,
+            )
+            return job
+        except Exception as exc:
+            logger.error(
+                "Failed to enqueue job for node {node_id}. Job might already be running or queue unavailable.",
+                node_id=node_id,
+                error=str(exc),
+            )
+            raise InvalidStateException(
+                f"Failed to start execution for node {node_id}. An execution might already be in progress or the queue is unavailable."
+            ) from exc
+
+    async def _prepare_and_enqueue(
+        self,
+        node: NodeInstance,
+        validation_func: Callable[
+            [NodeInstance, Optional[str], bool, Optional[int], Optional[List[Dict[str, Any]]]],
+            None,
+        ],
+        user_feedback: Optional[str],
+        is_retry_from_hitl: bool,
+        base_version_id: Optional[int],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ) -> NodeInstance:
+        """Centralized logic for validation, status updates, broadcasting, and enqueueing."""
+        previous_status_enum = node.status
+        previous_stage = node.current_stage
+        previous_status_value = node.status.value
+
+        validation_func(node, user_feedback, is_retry_from_hitl, base_version_id, adjudication_data)
+
+        status_changed = False
+        if node.status != NodeStatus.EXECUTING:
+            try:
+                node.status = NodeStatus.EXECUTING
+                node.current_stage = ExecutionStage.INITIALIZING
+                self.db.commit()
+                self.db.refresh(node)
+                status_changed = True
+                await self._broadcast_node_update(node)
+            except Exception:
+                self.db.rollback()
+                logger.exception("Failed to update node status to EXECUTING before enqueueing.", node_id=node.id)
+                raise InvalidStateException("Failed to prepare node for execution due to database error.")
+
+        try:
+            await self._enqueue_job(
+                node,
+                user_feedback=user_feedback,
+                is_retry_from_hitl=is_retry_from_hitl,
+                base_version_id=base_version_id,
+                adjudication_data=adjudication_data,
+                previous_status=previous_status_value,
+            )
+        except InvalidStateException:
+            if status_changed:
+                logger.warning("Reverting node status due to enqueue failure.", node_id=node.id)
+                try:
+                    self.db.refresh(node)
+                    if node.status == NodeStatus.EXECUTING:
+                        node.status = previous_status_enum
+                        node.current_stage = previous_stage
+                        self.db.commit()
+                        await self._broadcast_node_update(node)
+                    else:
+                        logger.info(
+                            "Node status changed concurrently, skipping reversion.",
+                            node_id=node.id,
+                            current_status=node.status.value,
+                        )
+                except Exception:
+                    logger.exception(
+                        "CRITICAL: Failed to revert node status after enqueue failure. DB state may be inconsistent.",
+                        node_id=node.id,
+                    )
+            raise
         return node
 
     async def enqueue_initial_execution(self, node_id: int, user: User) -> NodeInstance:
@@ -4574,14 +4125,13 @@ class NodeService:
                 "Initial execution is only allowed for nodes that have not started.",
                 details={"node_id": node.id, "current_status": node.status.value},
             )
-        self._validate_execution_request(node, None, False, None, None)
-        return await self._enqueue_job(
-            node_id,
-            user_feedback=None,
-            is_retry_from_hitl=False,
-            base_version_id=None,
-            adjudication_data=None,
-            previous_status=node.status.value,
+        return await self._prepare_and_enqueue(
+            node,
+            self._validate_execution_request,
+            None,
+            False,
+            None,
+            None,
         )
 
     async def enqueue_re_execution(
@@ -4598,46 +4148,32 @@ class NodeService:
                 f"Node must be 'Completed' to re-execute; current status is '{node.status.value}'.",
                 details={"node_id": node.id, "current_status": node.status.value},
             )
-        self._validate_execution_request(
+        return await self._prepare_and_enqueue(
             node,
-            user_feedback=user_feedback,
-            is_retry_from_hitl=False,
-            base_version_id=base_version_id,
-            adjudication_data=None,
-        )
-        return await self._enqueue_job(
-            node_id,
-            user_feedback=user_feedback,
-            is_retry_from_hitl=False,
-            base_version_id=base_version_id,
-            adjudication_data=None,
-            previous_status=node.status.value,
+            self._validate_execution_request,
+            user_feedback,
+            False,
+            base_version_id,
+            None,
         )
 
     async def enqueue_retry(
         self, node_id: int, user: User, user_feedback: Optional[str] = None
     ) -> NodeInstance:
-        """Retry a failed node, with an ownership check."""
+        """Retry a failed or canceled node, with an ownership check."""
         node = self.get_node_instance(node_id, user=user)
-        if node.status != NodeStatus.FAILED:
+        if node.status not in [NodeStatus.FAILED, NodeStatus.CANCELED]:
             raise InvalidStateException(
-                f"Node must be 'Failed' to retry; current status is '{node.status.value}'.",
+                f"Node must be 'Failed' or 'Canceled' to retry; current status is '{node.status.value}'.",
                 details={"node_id": node.id, "current_status": node.status.value},
             )
-        self._validate_execution_request(
+        return await self._prepare_and_enqueue(
             node,
-            user_feedback=user_feedback,
-            is_retry_from_hitl=False,
-            base_version_id=None,
-            adjudication_data=None,
-        )
-        return await self._enqueue_job(
-            node_id,
-            user_feedback=user_feedback,
-            is_retry_from_hitl=False,
-            base_version_id=None,
-            adjudication_data=None,
-            previous_status=node.status.value,
+            self._validate_execution_request,
+            user_feedback,
+            False,
+            None,
+            None,
         )
 
     async def enqueue_hitl_action(
@@ -4653,27 +4189,61 @@ class NodeService:
             raise InvalidStateException(f"Cannot enqueue HITL action for node in status {node.status}")
 
         is_retry = bool(user_feedback)
-        self._validate_execution_request(node, user_feedback, is_retry, None, adjudication_data)
-
-        previous_status = node.status.value
-        redis = await get_redis_pool()
-        await redis.enqueue_job(
-            TASK_EXECUTE_NODE,
-            node_id=node_id,
-            user_feedback=user_feedback,
-            is_retry_from_hitl=is_retry,
-            base_version_id=None,
-            adjudication_data=adjudication_data,
-            previous_status=previous_status,
+        return await self._prepare_and_enqueue(
+            node,
+            self._validate_execution_request,
+            user_feedback,
+            is_retry,
+            None,
+            adjudication_data,
         )
 
-        node.status = NodeStatus.EXECUTING
-        node.current_stage = ExecutionStage.PROCESSING
-        self.db.commit()
-        self.db.refresh(node)
-        await self._broadcast_node_update(node)
-        logger.info("Enqueued HITL continuation for node", node_id=node_id)
-        return node
+    async def cancel_execution(self, node_id: int, user: User) -> Dict[str, str]:
+        """Attempt to cancel an ongoing execution for a node."""
+        node = self.get_node_instance(node_id, user=user)
+
+        if node.status != NodeStatus.EXECUTING:
+            raise InvalidStateException(f"Node is not currently executing. Status: {node.status.value}")
+
+        redis = await get_redis_pool()
+        job_key = f"executing_node:{node_id}"
+        job = Job(job_key, redis)
+
+        try:
+            aborted = await job.abort()
+            if aborted:
+                logger.info("Cancellation signal sent for job {job_key}", job_key=job_key)
+                return {"message": "Cancellation request sent. The node will transition to 'Canceled' shortly."}
+
+            job_status = await job.status()
+            if job_status == JobStatus.not_found:
+                logger.warning("Job {job_key} not found in Redis during cancellation attempt.", job_key=job_key)
+                self.db.refresh(node)
+                if node.status == NodeStatus.EXECUTING:
+                    logger.error(
+                        "Inconsistent state detected for Node {node_id}. Forcing status correction.", node_id=node_id
+                    )
+                    node.status = NodeStatus.FAILED
+                    node.current_stage = ExecutionStage.FAILED
+                    if node.temporary_result:
+                        node.temporary_result.error_log = (
+                            "Execution state inconsistent (Job lost). Automatically marked as failed."
+                        )
+                    self.db.commit()
+                    await self._broadcast_node_update(node)
+                    return {"message": "Execution not found, but node status was inconsistent. Marked as Failed."}
+                return {"message": f"Execution not found. Current status: {node.status.value}"}
+
+            logger.warning("Could not send cancellation signal for job {job_key}.", job_key=job_key)
+            self.db.refresh(node)
+            if node.status != NodeStatus.EXECUTING:
+                return {
+                    "message": f"Execution could not be cancelled as it already completed or failed. Current status: {node.status.value}"
+                }
+            raise WorkflowException("Failed to cancel execution. The task might be unresponsive.", status_code=500)
+        except Exception as exc:
+            logger.exception("An unexpected error occurred during cancellation attempt for Node {node_id}.", node_id=node_id)
+            raise WorkflowException(f"An error occurred during cancellation: {exc}", status_code=500) from exc
 
     async def execute_in_worker(
         self,
@@ -4739,7 +4309,7 @@ class NodeService:
             self.db.commit()
             await self._broadcast_node_update(node)
 
-            execution_output = await executor.execute_node(
+            execution_result: ExecutionResult = await executor.execute_node(
                 node,
                 resolved_inputs,
                 previous_hitl_history,
@@ -4752,7 +4322,8 @@ class NodeService:
             self.db.commit()
             await self._broadcast_node_update(node)
 
-            temp_result.output_data = execution_output
+            temp_result.output_data = execution_result.output_data
+            temp_result.execution_artifacts = execution_result.artifacts
             temp_result.error_log = None
             node.status = NodeStatus.AWAITING_HITL_APPROVAL
             node.current_stage = ExecutionStage.AWAITING_REVIEW
@@ -4848,6 +4419,7 @@ class NodeService:
             node_instance_id=node.id,
             input_dependencies=input_map,
             accumulated_hitl_interactions=interactions,
+            execution_artifacts={},
             llm_model_name=settings.LLM_MODEL_NAME,
             temperature=settings.DEFAULT_TEMPERATURE,
         )
@@ -5187,6 +4759,7 @@ class NodeService:
                 based_on_version_id=base_version.id,
                 output_data=submission.edited_output_data,
                 raw_generated_output=base_version.raw_generated_output,
+                execution_artifacts=base_version.execution_artifacts,
                 input_dependencies=base_version.input_dependencies,
                 hitl_history=history,
                 llm_model_name=base_version.llm_model_name,
@@ -5214,6 +4787,7 @@ class NodeService:
         next_node: Optional[NodeInstance] = None
         structure_changed = False
         workflow_completed = False
+        old_version_id = node.active_version_id
 
         try:
             node.active_version_id = new_version.id
@@ -5245,13 +4819,15 @@ class NodeService:
 
         self.db.refresh(node)
         await self._broadcast_node_update(node)
+        if old_version_id != new_version.id:
+            await self._broadcast_version_change(node)
 
         if structure_changed:
             await workflow_service.broadcast_structure_update(node.workflow_instance_id)
 
         if workflow_completed:
-            workflow = workflow_service.get_workflow_instance(node.workflow_instance_id, user=user)
-            await workflow_service._broadcast_workflow_update(workflow)
+            workflow_read = workflow_service.get_workflow_instance(node.workflow_instance_id, user=user)
+            await workflow_service._broadcast_workflow_update(workflow_read)
 
         if next_node and next_node.status == NodeStatus.NOT_STARTED:
             await self.enqueue_initial_execution(next_node.id, user=user)
@@ -5313,6 +4889,7 @@ class NodeService:
         if status_changed:
             await self._broadcast_node_update(node)
 
+        await self._broadcast_version_change(node)
         return node
 
     async def _broadcast_node_update(self, node: NodeInstance):
@@ -5320,6 +4897,16 @@ class NodeService:
 
         node_data = NodeInstanceRead.model_validate(node).model_dump(mode="json")
         await broadcast_event(node.workflow_instance_id, EventType.NODE_STATUS_UPDATED, node_data, node_id=node.id)
+
+    async def _broadcast_version_change(self, node: NodeInstance):
+        """Broadcasts that the active version has changed."""
+        node_data = NodeInstanceRead.model_validate(node).model_dump(mode="json")
+        await broadcast_event(
+            node.workflow_instance_id,
+            EventType.NODE_ACTIVE_VERSION_CHANGED,
+            node_data,
+            node_id=node.id,
+        )
 
     def get_versions(self, node_id: int, user: User) -> List[NodeVersion]:
         """Get all versions for a node, with an ownership check."""
@@ -5416,6 +5003,14 @@ class ProjectService:
     def get_projects_paginated(self, user: User, skip: int, limit: int) -> Tuple[int, List[Project]]:
         """Return a user's projects along with a total count for pagination."""
         return self.project_repo.list_paginated_for_user(user, skip, limit)
+
+    def get_historical_problems(self) -> List[HistoricalProblem]:
+        """Retrieve the list of available historical problems (R3.3)."""
+        return (
+            self.db.query(HistoricalProblem)
+            .order_by(HistoricalProblem.year.desc(), HistoricalProblem.type)
+            .all()
+        )
 
     def get_project_details(self, project_id: int, user: User) -> Project:
         """Return project details after verifying ownership."""
@@ -5855,6 +5450,7 @@ class UserService:
 ### services/workflow_service.py Content:
 
 ```py
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Set
 
 from loguru import logger
@@ -5866,17 +5462,18 @@ from backend.models.user import User
 from backend.models.workflow import ExecutionStage, NodeInstance, NodeStatus, WorkflowInstance, WorkflowStatus
 from backend.schemas.common import PaginatedResponse
 from backend.schemas.events import EventType
-from backend.schemas.node import StalenessInfo
-from backend.schemas.workflow import WorkflowCreate, WorkflowInstanceRead, WorkflowUpdate
-from backend.services.node_service import NodeService
-from backend.utils.event_utils import broadcast_event
-from backend.workflow_definition import (
-    PHASE_2_TEMPLATE,
-    PREVIOUS_IN_TASK,
-    TERMINAL_NODE_SUFFIX,
-    WORKFLOW_DEFINITION,
-    NodeType,
+from backend.schemas.node import NodeInstanceRead, StalenessInfo
+from backend.schemas.workflow import (
+    PhaseRead,
+    StageRead,
+    WorkflowCreate,
+    WorkflowInstanceRead,
+    WorkflowUpdate,
 )
+from backend.utils.event_utils import broadcast_event
+from backend.workflow import DEFAULT_WORKFLOW_SPEC_ID, load_workflow_spec
+from backend.workflow.constants import PREVIOUS_IN_TASK
+from backend.workflow.spec import NodeType, WorkflowSpec
 
 
 def _merge_dependencies(
@@ -5914,6 +5511,12 @@ def _merge_dependencies(
 class WorkflowService:
     def __init__(self, db: Session):
         self.db = db
+        self._workflow_spec: Optional[WorkflowSpec] = None
+
+    def _get_workflow_spec(self) -> WorkflowSpec:
+        if not self._workflow_spec:
+            self._workflow_spec = load_workflow_spec(DEFAULT_WORKFLOW_SPEC_ID)
+        return self._workflow_spec
 
     def _get_workflow_for_user(self, workflow_id: int, user: User) -> WorkflowInstance:
         """Retrieve a workflow and enforce ownership."""
@@ -5924,25 +5527,96 @@ class WorkflowService:
             raise ForbiddenException("You do not have permission to access this workflow.")
         return workflow
 
+    def _calculate_staleness_flags(self, workflow: WorkflowInstance) -> Dict[int, bool]:
+        """Calculates the boolean staleness flag for all nodes in the workflow."""
+        if not workflow.nodes:
+            return {}
+
+        nodes = workflow.nodes
+        active_version_map: Dict[int, Optional[int]] = {node.id: node.active_version_id for node in nodes}
+        staleness_flags: Dict[int, bool] = {}
+
+        for node in nodes:
+            is_stale = False
+            if node.status == NodeStatus.COMPLETED and node.active_version:
+                input_dependencies = node.active_version.input_dependencies or {}
+                for upstream_node_id, consumed_version_id in input_dependencies.items():
+                    current_active_version_id = active_version_map.get(upstream_node_id)
+                    if current_active_version_id != consumed_version_id:
+                        is_stale = True
+                        break
+            staleness_flags[node.id] = is_stale
+
+        return staleness_flags
+
+    def _build_hierarchical_phases(
+        self, nodes: List[NodeInstance], staleness_flags: Dict[int, bool]
+    ) -> List[PhaseRead]:
+        """Convert node instances into a Phase -> Stage -> Node hierarchy."""
+        phases: "OrderedDict[str, PhaseRead]" = OrderedDict()
+        sorted_nodes = sorted(nodes or [], key=lambda n: n.order_index)
+
+        for node in sorted_nodes:
+            phase_name = node.phase_id
+            if phase_name not in phases:
+                phases[phase_name] = PhaseRead(name=phase_name, stages=[])
+            phase = phases[phase_name]
+
+            stage = next((s for s in phase.stages if s.id == node.stage_id), None)
+            if not stage:
+                stage = StageRead(id=node.stage_id, name=node.stage_name, nodes=[])
+                phase.stages.append(stage)
+
+            node_read = NodeInstanceRead.model_validate(node)
+            node_read.is_stale = staleness_flags.get(node.id, False)
+            stage.nodes.append(node_read)
+
+        return list(phases.values())
+
+    def _serialize_workflow(self, workflow: WorkflowInstance) -> WorkflowInstanceRead:
+        """Build a WorkflowInstanceRead with hierarchical phase data."""
+        if not workflow.nodes:
+            self.db.refresh(workflow, ["nodes"])
+        staleness_flags = self._calculate_staleness_flags(workflow)
+        hierarchical_phases = self._build_hierarchical_phases(workflow.nodes or [], staleness_flags)
+        return WorkflowInstanceRead(
+            id=workflow.id,
+            name=workflow.name,
+            status=workflow.status,
+            project_id=workflow.project_id,
+            user_id=workflow.user_id,
+            phases=hierarchical_phases,
+        )
+
     def get_workflows_paginated(
         self, user: User, skip: int, limit: int
     ) -> PaginatedResponse[WorkflowInstanceRead]:
-        """Return a user's workflows ordered by creation date with pagination."""
+        """Return a user's workflows ordered by creation date with pagination and staleness info."""
         query = self.db.query(WorkflowInstance).filter(WorkflowInstance.user_id == user.id)
         total = query.count()
         workflows = (
-            query.options(joinedload(WorkflowInstance.nodes))
+            query.options(joinedload(WorkflowInstance.nodes).joinedload(NodeInstance.active_version))
             .order_by(WorkflowInstance.created_at.desc())
             .offset(skip)
             .limit(limit)
             .all()
         )
-        serialized = [WorkflowInstanceRead.model_validate(workflow) for workflow in workflows]
-        return PaginatedResponse(total=total, items=serialized)
+        serialized_items = [self._serialize_workflow(workflow) for workflow in workflows]
+        return PaginatedResponse(total=total, items=serialized_items)
 
-    def get_workflow_instance(self, workflow_id: int, user: User) -> WorkflowInstance:
-        """Get a workflow instance with ownership check."""
-        return self._get_workflow_for_user(workflow_id, user)
+    def get_workflow_instance(self, workflow_id: int, user: User) -> WorkflowInstanceRead:
+        """Get a workflow instance with ownership check and staleness calculation."""
+        workflow = (
+            self.db.query(WorkflowInstance)
+            .options(joinedload(WorkflowInstance.nodes).joinedload(NodeInstance.active_version))
+            .get(workflow_id)
+        )
+        if not workflow:
+            raise NotFoundException(f"WorkflowInstance {workflow_id} not found.")
+        if workflow.user_id != user.id:
+            raise ForbiddenException("You do not have permission to access this workflow.")
+
+        return self._serialize_workflow(workflow)
 
     def create_workflow(self, create_data: WorkflowCreate, user: User) -> WorkflowInstance:
         project = self.db.query(Project).get(create_data.project_id)
@@ -5960,7 +5634,11 @@ class WorkflowService:
         )
         self.db.add(workflow)
         self.db.flush()
-        self._initialize_nodes(workflow)
+        spec = self._get_workflow_spec()
+        if not spec.dynamic_task_templates:
+            logger.warning("Workflow spec has no dynamic templates. Skipping insertion.", workflow_id=node.workflow_instance_id)
+            return False
+        self._initialize_nodes(workflow, spec)
         self.db.commit()
         self.db.refresh(workflow)
         return workflow
@@ -5984,21 +5662,29 @@ class WorkflowService:
         self.db.commit()
         logger.info("Deleted workflow and associated data", workflow_id=workflow_id)
 
-    def _initialize_nodes(self, workflow: WorkflowInstance):
+    def _initialize_nodes(self, workflow: WorkflowInstance, spec: Optional[WorkflowSpec] = None):
+        spec = spec or self._get_workflow_spec()
         order_index = 0
-        for node_def in WORKFLOW_DEFINITION["structure"]:
+        for node_spec in spec.structure:
+            stage_id = node_spec.stage_id or node_spec.id.rsplit(".", 1)[0]
+            stage_name = node_spec.stage_name or node_spec.name
             node = NodeInstance(
                 workflow_instance_id=workflow.id,
                 user_id=workflow.user_id,
-                definition_id=node_def["id"],
-                name=node_def["name"],
-                node_type=node_def["type"],
-                hitl_mode=node_def["hitl_mode"],
-                dependencies=node_def.get("dependencies", {}),
-                external_inputs=node_def.get("external_inputs", []),
+                definition_id=node_spec.id,
+                name=node_spec.name,
+                node_type=node_spec.type,
+                hitl_mode=node_spec.hitl_mode,
+                handler_type=node_spec.handler_type,
+                sca_selection_mode=node_spec.sca_selection_mode,
+                export_config=dict(node_spec.export_config or {}),
+                dependencies=dict(node_spec.dependencies or {}),
+                external_inputs=list(node_spec.external_inputs or []),
                 order_index=order_index,
-                phase_id=node_def["phase"],
-                task_group_id=node_def.get("task_group_id"),
+                phase_id=node_spec.phase,
+                stage_id=stage_id,
+                stage_name=stage_name,
+                task_group_id=node_spec.task_group_id,
                 current_stage=ExecutionStage.NOT_STARTED,
             )
             self.db.add(node)
@@ -6006,6 +5692,7 @@ class WorkflowService:
 
     async def start_workflow(self, workflow_id: int, user: User) -> NodeInstance:
         """Starts or resumes a workflow, with an ownership check."""
+        from backend.services.node_service import NodeService
         workflow = self._get_workflow_for_user(workflow_id, user)
         first_node = (
             self.db.query(NodeInstance)
@@ -6020,7 +5707,7 @@ class WorkflowService:
         if workflow.status != WorkflowStatus.RUNNING:
             workflow.status = WorkflowStatus.RUNNING
             self.db.commit()
-            await self._broadcast_workflow_update(workflow)
+            await self._broadcast_workflow_update(self.get_workflow_instance(workflow_id, user))
 
         node_service = NodeService(self.db)
         return await node_service.enqueue_initial_execution(first_node.id, user)
@@ -6052,11 +5739,12 @@ class WorkflowService:
             )
             return False
 
+        spec = self._get_workflow_spec()
         insertion_index = node.order_index + 1
-        total_nodes_to_insert = len(taskbook) * len(PHASE_2_TEMPLATE)
+        total_nodes_to_insert = len(taskbook) * len(spec.dynamic_task_templates)
         self._shift_subsequent_nodes(node.workflow_instance_id, insertion_index, total_nodes_to_insert)
-        new_phase2_nodes = self._insert_dynamic_tasks(node.workflow_instance_id, insertion_index, taskbook)
-        self._update_phase3_dependencies(node.workflow_instance_id, new_phase2_nodes)
+        new_phase2_nodes = self._insert_dynamic_tasks(node.workflow_instance_id, insertion_index, taskbook, spec)
+        self._update_phase3_dependencies(node.workflow_instance_id, new_phase2_nodes, spec)
         self.db.flush()
 
         return True
@@ -6073,6 +5761,7 @@ class WorkflowService:
         workflow_id: int,
         start_index: int,
         taskbook: List[Dict[str, Any]],
+        spec: WorkflowSpec,
     ) -> List[NodeInstance]:
         workflow = self.db.query(WorkflowInstance).get(workflow_id)
         if not workflow:
@@ -6095,14 +5784,18 @@ class WorkflowService:
                 fields_list = required_fields if isinstance(required_fields, list) else [required_fields]
 
                 if upstream_id in defined_task_ids:
-                    resolved_id = f"{upstream_id}{TERMINAL_NODE_SUFFIX}"
+                    resolved_id = f"{upstream_id}{spec.terminal_node_suffix}"
                     resolved_task_specific_inputs[resolved_id] = list(fields_list)
                 else:
                     resolved_task_specific_inputs[upstream_id] = list(fields_list)
 
-            for id_suffix, template in PHASE_2_TEMPLATE.items():
+            for id_suffix, template in spec.dynamic_task_templates.items():
                 definition_id = f"{task_id}{id_suffix}"
-                name = f"[{task_id}] {template['name_prefix']}"
+                name = f"[{task_id}] {template.name_prefix}"
+                stage_suffix = id_suffix.rsplit(".", 1)[0] if "." in id_suffix else id_suffix
+                stage_id = f"{task_id}{stage_suffix}"
+                stage_name_prefix = template.stage_name_prefix or "Execution"
+                stage_name = f"[{task_id}] {stage_name_prefix}"
                 dependencies = {
                     "1.1.1": {"required_fields": ["Formal Problem Restatement"]},
                     "1.1.2": {"required_fields": ["Structured Modeling Taskbook"]},
@@ -6110,7 +5803,7 @@ class WorkflowService:
 
                 dependencies = _merge_dependencies(dependencies, resolved_task_specific_inputs)
 
-                template_inputs = template.get("inputs", {})
+                template_inputs = template.inputs or {}
                 intra_task_deps: Dict[str, List[str]] = {}
                 for upstream_def_id, required_fields in template_inputs.items():
                     fields_list = list(required_fields)
@@ -6123,7 +5816,7 @@ class WorkflowService:
                 dependencies = _merge_dependencies(dependencies, intra_task_deps)
 
                 node_external_inputs: List[str] = []
-                if template.get("inherits_external_inputs"):
+                if template.inherits_external_inputs:
                     node_external_inputs = list(task_external_inputs)
 
                 new_node = NodeInstance(
@@ -6131,12 +5824,17 @@ class WorkflowService:
                     user_id=workflow.user_id,
                     definition_id=definition_id,
                     name=name,
-                    node_type=template["type"],
-                    hitl_mode=template["hitl_mode"],
+                    node_type=template.type,
+                    hitl_mode=template.hitl_mode,
+                    handler_type=template.handler_type,
+                    sca_selection_mode=template.sca_selection_mode,
+                    export_config=dict(template.export_config or {}),
                     dependencies=dependencies,
                     external_inputs=node_external_inputs,
                     order_index=current_index,
                     phase_id=phase_2_name,
+                    stage_id=stage_id,
+                    stage_name=stage_name,
                     task_group_id=task_id,
                     current_stage=ExecutionStage.NOT_STARTED,
                 )
@@ -6148,7 +5846,7 @@ class WorkflowService:
         self.db.flush()
         return all_new_nodes
 
-    def _update_phase3_dependencies(self, workflow_id: int, phase2_nodes: List[NodeInstance]):
+    def _update_phase3_dependencies(self, workflow_id: int, phase2_nodes: List[NodeInstance], spec: WorkflowSpec):
         """Ensure node 3.1.1 depends on outputs from each Phase 2 robustness node."""
         node_311 = (
             self.db.query(NodeInstance)
@@ -6159,17 +5857,17 @@ class WorkflowService:
             return
         current_deps = node_311.dependencies or {}
         new_deps_to_merge: Dict[str, List[str]] = {}
-        terminal_template = PHASE_2_TEMPLATE.get(TERMINAL_NODE_SUFFIX)
+        terminal_template = spec.dynamic_task_templates.get(spec.terminal_node_suffix)
         if not terminal_template:
             logger.error(
                 "Terminal node template not found in PHASE_2_TEMPLATE",
-                terminal_suffix=TERMINAL_NODE_SUFFIX,
+                terminal_suffix=spec.terminal_node_suffix,
             )
             return
 
         for p2_node in phase2_nodes:
-            if p2_node.definition_id.endswith(TERMINAL_NODE_SUFFIX):
-                required_fields = list(terminal_template.get("outputs", []))
+            if p2_node.definition_id.endswith(spec.terminal_node_suffix):
+                required_fields = list(terminal_template.outputs or [])
                 new_deps_to_merge[p2_node.definition_id] = required_fields
 
         node_311.dependencies = _merge_dependencies(current_deps, new_deps_to_merge)
@@ -6223,19 +5921,30 @@ class WorkflowService:
     async def _broadcast_structure_update(self, workflow_id: int):
         workflow = (
             self.db.query(WorkflowInstance)
-            .options(joinedload(WorkflowInstance.nodes))
+            .options(joinedload(WorkflowInstance.nodes).joinedload(NodeInstance.active_version))
             .get(workflow_id)
         )
         if workflow:
-            workflow_data = WorkflowInstanceRead.model_validate(workflow).model_dump(mode="json")
+            workflow_data = self._serialize_workflow(workflow).model_dump(mode="json")
             await broadcast_event(workflow_id, EventType.WORKFLOW_STRUCTURE_UPDATED, workflow_data)
 
-    async def _broadcast_workflow_update(self, workflow: WorkflowInstance):
-        if not workflow.nodes:
-            self.db.refresh(workflow, ["nodes"])
+    async def _broadcast_workflow_update(self, workflow_data: WorkflowInstanceRead | WorkflowInstance):
+        if isinstance(workflow_data, WorkflowInstance):
+            workflow_id = workflow_data.id
+            workflow_obj = (
+                self.db.query(WorkflowInstance)
+                .options(joinedload(WorkflowInstance.nodes).joinedload(NodeInstance.active_version))
+                .get(workflow_id)
+            )
+            if not workflow_obj:
+                logger.warning("Workflow {} not found for broadcast.", workflow_id)
+                return
+            serialized_data = self._serialize_workflow(workflow_obj).model_dump(mode="json")
+        else:
+            serialized_data = workflow_data.model_dump(mode="json")
+            workflow_id = workflow_data.id
 
-        workflow_data = WorkflowInstanceRead.model_validate(workflow).model_dump(mode="json")
-        await broadcast_event(workflow.id, EventType.WORKFLOW_STATUS_UPDATED, workflow_data)
+        await broadcast_event(workflow_id, EventType.WORKFLOW_STATUS_UPDATED, serialized_data)
 
 ```
 
@@ -6244,6 +5953,7 @@ class WorkflowService:
          - config_resolver.py
          - executor.py
          - llm_client.py
+         - results.py
          - sandbox_client.py
 
 ### services/execution_engine/__init__.py Content:
@@ -6349,39 +6059,23 @@ def resolve_config(project_snapshot: Optional[Dict[str, Any]]) -> ExecutionConfi
 ### services/execution_engine/executor.py Content:
 
 ```py
-"""
-Core Node Executor: Orchestrates LLM and Sandbox clients to run a node.
-
-This contains the primary business logic for node execution, adapted from
-the old `ExecutionSimulator`. It is initialized with clients (LLM, Sandbox)
-that are pre-configured by the config resolver, ensuring that each execution
-is isolated and uses the correct user resources.
-"""
+"""Core Node Executor: orchestrates handler dispatch for node execution."""
 
 import asyncio
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
-from backend.models.user import ThinkingDepth
 from backend.models.workflow import NodeInstance
 from backend.services.execution_engine.config_resolver import ExecutionConfig
+from backend.services.execution_engine.handlers.registry import get_handler_class
 from backend.services.execution_engine.llm_client import LLMClient
+from backend.services.execution_engine.results import ExecutionResult
 from backend.services.execution_engine.sandbox_client import SandboxClient
-from backend.workflow_definition import (
-    HITLMode,
-    KEY_ANALYSIS,
-    KEY_CANDIDATES,
-    KEY_CRITIQUES,
-    KEY_ID,
-    KEY_PRIMARY_ARTIFACT,
-    KEY_SCA_OUTPUT,
-    KEY_SELECTED_ITEM,
-)
 
 
 class NodeExecutor:
-    """Simulates node execution flows using configured clients."""
+    """Executes nodes by delegating to handler implementations."""
 
     def __init__(self, config: ExecutionConfig):
         self.config = config
@@ -6401,200 +6095,17 @@ class NodeExecutor:
         feedback: Optional[str],
         previous_output: Optional[Dict[str, Any]],
         adjudication_data: Optional[List[Dict[str, Any]]],
-    ) -> Dict[str, Any]:
+    ) -> ExecutionResult:
         await asyncio.sleep(1.0)
         logger.info(
-            "Executing node with NodeExecutor",
+            "Dispatching node execution",
             definition_id=node.definition_id,
-            hitl_mode=node.hitl_mode.value,
-            has_feedback=feedback is not None,
-            has_adjudication=adjudication_data is not None,
+            handler_type=node.handler_type.value,
         )
 
-        if node.hitl_mode == HITLMode.SCA:
-            return await self._execute_sca(node, inputs, feedback)
-        if node.hitl_mode == HITLMode.AVL:
-            return await self._execute_avl(node, inputs, feedback, previous_output, adjudication_data)
-        return await self._execute_varl(node, inputs, feedback)
-
-    async def _execute_varl(self, node: NodeInstance, inputs: Dict[str, Any], feedback: Optional[str]) -> Dict[str, Any]:
-        prompt = f"Generate a VARL artifact. Feedback: {feedback}"
-        llm_response = await self.llm_client.generate_text(prompt)
-
-        artifact = {
-            "content": llm_response,
-            "data": "Generic VARL data output",
-        }
-        if node.definition_id == "3.1.2":
-            artifact["Submission-Ready Paper"] = llm_response
-        elif node.definition_id.endswith(".2.2.1"):
-            # This part would involve the sandbox client
-            code_to_run = "print('Simulated execution')"  # Placeholder
-            sandbox_result = await self.sandbox_client.execute_code(code_to_run)
-            artifact["raw_results"] = sandbox_result.get("results", "Simulated Raw Data")
-            artifact["vv_data"] = "Simulated V&V Data from sandbox"
-            artifact["sensitivity_data"] = "Simulated Sensitivity Data from sandbox"
-
-        return {KEY_PRIMARY_ARTIFACT: artifact}
-
-    async def _execute_sca(self, node: NodeInstance, inputs: Dict[str, Any], feedback: Optional[str]) -> Dict[str, Any]:
-        output: Dict[str, Any] = {}
-        base_candidates: List[Dict[str, Any]] = []
-
-        if node.definition_id == "1.1.2":
-            base_candidates = self._generate_taskbook_candidates()
-        elif node.definition_id == "3.1.1":
-            base_candidates = self._generate_narrative_candidates()
-        elif node.definition_id.endswith(".2.2.2"):
-            output["vv_report"] = f"V&V Report for {node.definition_id}"
-            output["key_output_doc"] = f"Key Outputs for {node.definition_id}"
-            base_candidates = [
-                {KEY_ID: "V1", "name": "Visualization Plot A", "type": "Plot"},
-                {KEY_ID: "V2", "name": "Visualization Table B", "type": "Table"},
-                {KEY_ID: "V3", "name": "Visualization Plot C (Extra)", "type": "Plot"},
-            ]
-        else:  # Default case
-            base_candidates = [
-                {KEY_ID: "C1", "name": "Model Option A", "description": "A_data"},
-                {KEY_ID: "C2", "name": "Model Option B", "description": "B_data"},
-                {KEY_ID: "C3", "name": "Model Option C", "description": "C_data"},
-                {KEY_ID: "C4", "name": "Model Option D", "description": "D_data"},
-            ]
-
-        # Adjust candidate count based on thinking_depth, fulfilling R7.5.
-        num_candidates_map = {
-            ThinkingDepth.INSTANT: 2,
-            ThinkingDepth.MEDIUM: 3,
-            ThinkingDepth.HEAVY: 4,
-        }
-        num_to_generate = num_candidates_map.get(self.config.thinking_depth, 3)
-
-        final_candidates = base_candidates[:num_to_generate]
-
-        if feedback:
-            final_candidates.append({KEY_ID: "F1", "name": "Option based on feedback", "description": "F_data"})
-
-        analysis_prompt = f"Provide a comparative analysis of {len(final_candidates)} candidates."
-        analysis = await self.llm_client.generate_text(analysis_prompt)
-
-        output[KEY_CANDIDATES] = final_candidates
-        output[KEY_ANALYSIS] = analysis
-        return output
-
-    def _generate_narrative_candidates(self) -> List[Dict[str, Any]]:
-        # Static simulation, no LLM call needed to produce the options.
-        return [
-            {
-                KEY_ID: "N1",
-                "Thesis Statement": "Thesis A",
-                "Narrative Outline": "Outline A",
-                "Global Assessment": "Assessment A",
-            },
-            {
-                KEY_ID: "N2",
-                "Thesis Statement": "Thesis B",
-                "Narrative Outline": "Outline B",
-                "Global Assessment": "Assessment B",
-            },
-        ]
-
-    def _generate_taskbook_candidates(self) -> List[Dict[str, Any]]:
-        # This is also static simulation
-        task_a1 = {
-            "task_id": "Task_A1",
-            "task_name": "Define Objective",
-            "io_interfaces": {"inputs": {"1.1.1": ["Formal Problem Restatement"]}, "outputs": ["Objective Function"]},
-            "external_inputs": ["Problem Statement"],
-        }
-        task_a2 = {
-            "task_id": "Task_A2",
-            "task_name": "Solve Optimization",
-            "io_interfaces": {"inputs": {"Task_A1": ["Objective Function"]}, "outputs": ["Optimal Solution"]},
-            "external_inputs": ["Datasets"],
-        }
-        return [
-            {
-                KEY_ID: "OptA",
-                "name": "Optimization Approach",
-                "Structured Modeling Taskbook": {"tasks": [task_a1, task_a2]},
-            },
-            {
-                KEY_ID: "OptB",
-                "name": "Simulation Approach",
-                "Structured Modeling Taskbook": {
-                    "tasks": [
-                        {"task_id": "Task_B1", "task_name": "Build Sim", "io_interfaces": {}, "external_inputs": []}
-                    ]
-                },
-            },
-        ]
-
-    async def _execute_avl(
-        self,
-        node: NodeInstance,
-        inputs: Dict[str, Any],
-        feedback: Optional[str],
-        previous_output: Optional[Dict[str, Any]],
-        adjudication_data: Optional[List[Dict[str, Any]]],
-    ) -> Dict[str, Any]:
-        if adjudication_data or feedback:
-            context = adjudication_data if adjudication_data else feedback
-            previous_artifact_content = "N/A"
-            if previous_output and KEY_PRIMARY_ARTIFACT in previous_output:
-                previous_artifact_content = previous_output[KEY_PRIMARY_ARTIFACT].get("content", "N/A")
-            prompt = f"Refine the AVL artifact with context: {context}. Previous content was: {previous_artifact_content}"
-        else:
-            prompt = "Generate an initial AVL Artifact."
-
-        artifact_content = await self.llm_client.generate_text(prompt)
-
-        artifact = {
-            "content": artifact_content,
-            "data": "Generic AVL data output",
-        }
-        if node.definition_id == "1.1.1":
-            artifact["Formal Problem Restatement"] = f"Restatement: {artifact_content[:100]}..."
-            artifact["Global Assumption Framework"] = "Assumptions derived from artifact..."
-        elif node.definition_id.endswith(".2.1.2"):
-            input_211 = None
-            if node.task_group_id:
-                upstream_211_id = f"{node.task_group_id}.2.1.1"
-                input_211 = inputs.get(upstream_211_id)
-
-            selected_model_name = "Unknown"
-            if input_211 and KEY_SCA_OUTPUT in input_211:
-                selected_item = input_211[KEY_SCA_OUTPUT].get(KEY_SELECTED_ITEM)
-                if selected_item:
-                    selected_model_name = selected_item.get("name", "Unknown Model")
-
-            artifact["math_formulation"] = f"Math formulation for {selected_model_name}."
-            artifact["execution_blueprint"] = f"Blueprint for {selected_model_name}."
-
-        critiques = await self._critique(node, artifact, adjudication_data)
-        return {
-            KEY_PRIMARY_ARTIFACT: artifact,
-            KEY_CRITIQUES: critiques,
-        }
-
-    async def _critique(
-        self,
-        node: NodeInstance,
-        artifact: Dict[str, Any],
-        adjudication_data: Optional[List[Dict[str, Any]]],
-    ) -> List[Dict[str, Any]]:
-        # This part simulates the critique, it can remain as is.
-        if adjudication_data:
-            return [
-                {
-                    KEY_ID: "c3",
-                    "critique": "Refinement addressed major issues, but introduced a minor boundary condition error.",
-                    "severity": "Low",
-                }
-            ]
-        return [
-            {KEY_ID: "c1", "critique": "The core assumption lacks justification.", "severity": "High"},
-            {KEY_ID: "c2", "critique": "Terminology is ambiguous.", "severity": "Medium"},
-        ]
+        handler_cls = get_handler_class(node.handler_type)
+        handler = handler_cls(self, node)
+        return await handler.execute(inputs, history, feedback, previous_output, adjudication_data)
 
 ```
 
@@ -6663,6 +6174,28 @@ class LLMClient:
 
 ```
 
+### services/execution_engine/results.py Content:
+
+```py
+"""Shared execution engine data structures."""
+
+from typing import Any, Dict
+
+from pydantic import BaseModel, Field
+
+
+class ExecutionResult(BaseModel):
+    """Structured result from a node execution, including output and artifacts."""
+
+    output_data: Dict[str, Any]
+    artifacts: Dict[str, Any] = Field(default_factory=dict)
+
+
+__all__ = ["ExecutionResult"]
+
+
+```
+
 ### services/execution_engine/sandbox_client.py Content:
 
 ```py
@@ -6701,6 +6234,798 @@ class SandboxClient:
 
 ```
 
+            ## handlers
+             - __init__.py
+             - base.py
+             - code_execution.py
+             - final_paper.py
+             - generic_avl.py
+             - generic_sca.py
+             - generic_varl.py
+             - narrative_synthesis.py
+             - registry.py
+             - taskbook_generator.py
+
+### services/execution_engine/handlers/__init__.py Content:
+
+```py
+"""Node execution handler registry."""
+
+from .base import NodeHandler
+from .registry import get_handler_class, register_handler
+
+__all__ = ["NodeHandler", "get_handler_class", "register_handler"]
+
+
+```
+
+### services/execution_engine/handlers/base.py Content:
+
+```py
+"""Base classes and helpers for node execution handlers."""
+
+from __future__ import annotations
+
+import json
+import zipfile
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+from backend.models.workflow import NodeInstance
+from backend.services.execution_engine.results import ExecutionResult
+
+if TYPE_CHECKING:
+    from backend.services.execution_engine.executor import NodeExecutor
+
+
+class NodeHandler:
+    """Base class for encapsulating node execution, HITL, and export behavior."""
+
+    def __init__(self, executor: Optional["NodeExecutor"], node: NodeInstance):
+        self.executor = executor
+        self.node = node
+
+    @property
+    def behavior(self) -> Dict[str, Any]:
+        export_config = self.node.export_config or {}
+        return export_config.get("behavior", {})
+
+    @property
+    def config(self):
+        if not self.executor:
+            raise RuntimeError("Execution config is not available outside of runtime execution.")
+        return self.executor.config
+
+    @property
+    def llm_client(self):
+        if not self.executor:
+            raise RuntimeError("LLM client is not available outside of runtime execution.")
+        return self.executor.llm_client
+
+    @property
+    def sandbox_client(self):
+        if not self.executor:
+            raise RuntimeError("Sandbox client is not available outside of runtime execution.")
+        return self.executor.sandbox_client
+
+    async def execute(
+        self,
+        inputs: Dict[str, Any],
+        history: List[Dict[str, Any]],
+        feedback: Optional[str],
+        previous_output: Optional[Dict[str, Any]],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ) -> ExecutionResult:
+        raise NotImplementedError
+
+    def validate_hitl_integrity(self, raw_output: Dict[str, Any], interaction_data: Optional[Dict[str, Any]]):
+        """Override to enforce handler-specific HITL submission requirements."""
+
+    def determine_final_output(
+        self,
+        raw_output: Dict[str, Any],
+        interaction_data: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Override to transform raw execution output into a finalized payload."""
+        return raw_output
+
+    def format_export(
+        self,
+        zf: zipfile.ZipFile,
+        output_data: Dict[str, Any],
+        base_path: str,
+        execution_artifacts: Optional[Dict[str, Any]] = None,
+    ):
+        """Default export implementation writes the node output as JSON."""
+        if not output_data:
+            return
+        path = f"{base_path}output.json"
+        serialized = json.dumps(output_data, indent=2, default=str).encode("utf-8")
+        zf.writestr(path, serialized)
+
+```
+
+### services/execution_engine/handlers/code_execution.py Content:
+
+```py
+"""Handler for automatic code generation and sandbox execution."""
+
+from __future__ import annotations
+
+import json
+from typing import Any, Dict, List, Optional
+
+from backend.workflow.constants import KEY_PRIMARY_ARTIFACT
+from backend.workflow.spec import HandlerType
+
+from ..results import ExecutionResult
+from .base import NodeHandler
+from .registry import register_handler
+
+
+class CodeExecutionHandler(NodeHandler):
+    async def execute(
+        self,
+        inputs: Dict[str, Any],
+        history: List[Dict[str, Any]],
+        feedback: Optional[str],
+        previous_output: Optional[Dict[str, Any]],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ) -> ExecutionResult:
+        code_to_run = f"# Python code generated for {self.node.definition_id}\\nprint('Simulated execution')"
+        sandbox_result = await self.sandbox_client.execute_code(code_to_run)
+
+        artifacts: Dict[str, Any] = {"generated_code.py": code_to_run, "execution.log": sandbox_result.get("stdout", "")}
+        if sandbox_result.get("stderr"):
+            artifacts["error.log"] = sandbox_result.get("stderr")
+
+        artifact = {
+            "raw_results": sandbox_result.get("results", "Simulated Raw Data"),
+        }
+        if (self.behavior or {}).get("include_vv_data"):
+            artifact["vv_data"] = "Simulated V&V Data from sandbox"
+            artifact["sensitivity_data"] = "Simulated Sensitivity Data from sandbox"
+
+        output_data = {KEY_PRIMARY_ARTIFACT: artifact}
+        return ExecutionResult(output_data=output_data, artifacts=artifacts)
+
+    def format_export(
+        self,
+        zf,
+        output_data: Dict[str, Any],
+        base_path: str,
+        execution_artifacts: Optional[Dict[str, Any]] = None,
+    ):
+        export_config = self.node.export_config or {}
+        code_keys = export_config.get("code_keys", [])
+        if execution_artifacts:
+            for key in code_keys:
+                if key in execution_artifacts:
+                    zf.writestr(f"{base_path}{key}", execution_artifacts[key])
+
+        attachments = ["raw_results", "vv_data", "sensitivity_data"]
+        for key in attachments:
+            if key in output_data:
+                path = f"{base_path}{key}.json"
+                zf.writestr(path, json.dumps(output_data[key], indent=2, default=str).encode("utf-8"))
+
+
+register_handler(HandlerType.CODE_EXECUTION, CodeExecutionHandler)
+
+
+```
+
+### services/execution_engine/handlers/final_paper.py Content:
+
+```py
+"""Handler responsible for generating the final O-Award paper."""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from backend.workflow.constants import KEY_PRIMARY_ARTIFACT
+from backend.workflow.spec import HandlerType
+
+from ..results import ExecutionResult
+from .base import NodeHandler
+from .registry import register_handler
+
+
+class FinalPaperHandler(NodeHandler):
+    async def execute(
+        self,
+        inputs: Dict[str, Any],
+        history: List[Dict[str, Any]],
+        feedback: Optional[str],
+        previous_output: Optional[Dict[str, Any]],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ) -> ExecutionResult:
+        prompt = "Forge the final O-Award submission-ready paper summarizing all findings."
+        if feedback:
+            prompt += f" Incorporate reviewer feedback: {feedback}."
+        llm_response = await self.llm_client.generate_text(prompt)
+
+        artifact = {
+            "Submission-Ready Paper": llm_response,
+            "content": llm_response,
+        }
+        output_data = {KEY_PRIMARY_ARTIFACT: artifact}
+        artifacts = {"prompt": prompt}
+        return ExecutionResult(output_data=output_data, artifacts=artifacts)
+
+    def format_export(
+        self,
+        zf,
+        output_data: Dict[str, Any],
+        base_path: str,
+        execution_artifacts: Optional[Dict[str, Any]] = None,
+    ):
+        export_config = self.node.export_config or {}
+        paper_key = export_config.get("paper_key", "Submission-Ready Paper")
+        filename = export_config.get("filename", "FinalPaper.md")
+
+        content = output_data.get(paper_key)
+        if content:
+            zf.writestr(f"{base_path}{filename}", content)
+
+
+register_handler(HandlerType.FINAL_PAPER, FinalPaperHandler)
+
+
+```
+
+### services/execution_engine/handlers/generic_avl.py Content:
+
+```py
+"""Generic AVL handler used by multiple nodes."""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from backend.exceptions import InvalidStateException
+from backend.models.user import HITLProfile
+from backend.workflow.constants import (
+    KEY_CRITIQUES,
+    KEY_ID,
+    KEY_PRIMARY_ARTIFACT,
+    KEY_SCA_OUTPUT,
+    KEY_SELECTED_ITEM,
+)
+from backend.workflow.spec import HandlerType
+
+from ..results import ExecutionResult
+from .base import NodeHandler
+from .registry import register_handler
+
+
+class GenericAVLHandler(NodeHandler):
+    async def execute(
+        self,
+        inputs: Dict[str, Any],
+        history: List[Dict[str, Any]],
+        feedback: Optional[str],
+        previous_output: Optional[Dict[str, Any]],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ) -> ExecutionResult:
+        prompt = self._build_prompt(feedback, adjudication_data, previous_output)
+        artifact_content = await self.llm_client.generate_text(prompt)
+
+        artifact: Dict[str, Any] = {
+            "content": artifact_content,
+            "data": "Generic AVL data output",
+        }
+
+        if self.behavior.get("variant") == "formulation":
+            artifact.update(self._build_formulation_artifacts(inputs))
+
+        critiques = self._critique(artifact, adjudication_data)
+        output_data = {
+            KEY_PRIMARY_ARTIFACT: artifact,
+            KEY_CRITIQUES: critiques,
+        }
+        artifacts = {"generation_prompt": prompt}
+        return ExecutionResult(output_data=output_data, artifacts=artifacts)
+
+    def validate_hitl_integrity(self, raw_output: Dict[str, Any], interaction_data: Optional[Dict[str, Any]]):
+        critiques = raw_output.get(KEY_CRITIQUES, [])
+        if not critiques:
+            return
+        if not interaction_data or "adjudication" not in interaction_data:
+            raise InvalidStateException("AVL requires 'adjudication' data when critiques are present.")
+
+        adjudication_data = interaction_data["adjudication"]
+        if not isinstance(adjudication_data, list) or len(adjudication_data) != len(critiques):
+            raise InvalidStateException("Adjudication data must cover every critique.")
+
+        available_ids = {c.get(KEY_ID) for c in critiques if c.get(KEY_ID)}
+        submitted_ids = {item.get("critique_id") for item in adjudication_data if item.get("critique_id")}
+        if submitted_ids != available_ids:
+            raise InvalidStateException("Mismatch between critiques and adjudication decisions.")
+
+    def determine_final_output(
+        self,
+        raw_output: Dict[str, Any],
+        interaction_data: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        if KEY_PRIMARY_ARTIFACT in raw_output:
+            return raw_output[KEY_PRIMARY_ARTIFACT]
+        return raw_output
+
+    def _build_prompt(
+        self,
+        feedback: Optional[str],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+        previous_output: Optional[Dict[str, Any]],
+    ) -> str:
+        if adjudication_data or feedback:
+            context = adjudication_data if adjudication_data else feedback
+            previous_artifact_content = "N/A"
+            if previous_output and KEY_PRIMARY_ARTIFACT in previous_output:
+                previous_artifact_content = previous_output[KEY_PRIMARY_ARTIFACT].get("content", "N/A")
+            return f"Refine the AVL artifact with context: {context}. Previous content was: {previous_artifact_content}"
+        return "Generate an initial AVL Artifact."
+
+    def _build_formulation_artifacts(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        if not self.node.task_group_id:
+            return {}
+
+        upstream_211_id = f"{self.node.task_group_id}.2.1.1"
+        input_211 = inputs.get(upstream_211_id, {})
+        selected_model_name = "Unknown Model"
+        sca_payload = input_211.get(KEY_SCA_OUTPUT) or {}
+        selected_item = sca_payload.get(KEY_SELECTED_ITEM)
+        if selected_item:
+            selected_model_name = selected_item.get("name", selected_model_name)
+
+        return {
+            "math_formulation": f"Math formulation for {selected_model_name}.",
+            "execution_blueprint": f"Blueprint for {selected_model_name}.",
+        }
+
+    def _critique(
+        self,
+        artifact: Dict[str, Any],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        profile = self.config.hitl_profile
+
+        if profile == HITLProfile.EXPERT:
+            if adjudication_data:
+                return []
+            return [
+                {
+                    KEY_ID: "c_exp_1",
+                    "critique": "Overall sound, but verify boundary conditions of the core assumption.",
+                    "severity": "Medium",
+                },
+            ]
+
+        if profile == HITLProfile.NOVICE:
+            if adjudication_data:
+                return [
+                    {
+                        KEY_ID: "c_nov_r1",
+                        "critique": "Refinement improved clarity, but introduced a minor ambiguity in terminology.",
+                        "severity": "Low",
+                    }
+                ]
+            return [
+                {
+                    KEY_ID: "c_nov_1",
+                    "critique": "The primary assumption lacks empirical justification. Consider alternative data sources.",
+                    "severity": "High",
+                },
+                {
+                    KEY_ID: "c_nov_2",
+                    "critique": "Key terminology is used ambiguously. Define all central concepts clearly.",
+                    "severity": "Medium",
+                },
+                {
+                    KEY_ID: "c_nov_3",
+                    "critique": "The scope appears overly broad. Narrow the focus for better analysis.",
+                    "severity": "Medium",
+                },
+            ]
+
+        if adjudication_data:
+            return [
+                {
+                    KEY_ID: "c3",
+                    "critique": "Refinement addressed major issues, but introduced a minor boundary condition error.",
+                    "severity": "Low",
+                }
+            ]
+        return [
+            {KEY_ID: "c1", "critique": "The core assumption lacks justification.", "severity": "High"},
+            {KEY_ID: "c2", "critique": "Terminology is ambiguous.", "severity": "Medium"},
+        ]
+
+
+register_handler(HandlerType.GENERIC_AVL, GenericAVLHandler)
+
+
+```
+
+### services/execution_engine/handlers/generic_sca.py Content:
+
+```py
+"""Generic SCA handler and shared SCA utilities."""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from backend.exceptions import InvalidStateException
+from backend.models.user import ThinkingDepth
+from backend.workflow.constants import (
+    KEY_ANALYSIS,
+    KEY_CANDIDATES,
+    KEY_ID,
+    KEY_SCA_OUTPUT,
+    KEY_SELECTED_ITEM,
+    KEY_SELECTED_ITEMS,
+)
+from backend.workflow.spec import HandlerType, SCASelectionMode
+
+from ..results import ExecutionResult
+from .base import NodeHandler
+from .registry import register_handler
+
+
+class BaseSCAHandler(NodeHandler):
+    """Shared SCA validation and finalization logic."""
+
+    def _selection_mode(self) -> SCASelectionMode:
+        return self.node.sca_selection_mode or SCASelectionMode.SINGLE
+
+    def validate_hitl_integrity(self, raw_output: Dict[str, Any], interaction_data: Optional[Dict[str, Any]]):
+        if not interaction_data or "selected_ids" not in interaction_data:
+            raise InvalidStateException("SCA requires 'selected_ids' in interaction_data.")
+        selected_ids = interaction_data["selected_ids"]
+        if not isinstance(selected_ids, list) or not selected_ids:
+            raise InvalidStateException("SCA requires a non-empty list of selections.")
+
+        selection_mode = self._selection_mode()
+        if selection_mode == SCASelectionMode.SINGLE and len(selected_ids) != 1:
+            raise InvalidStateException("This node requires exactly one selection.")
+
+        candidates = raw_output.get(KEY_CANDIDATES, [])
+        available_ids = {candidate.get(KEY_ID) for candidate in candidates if candidate.get(KEY_ID)}
+        if not set(selected_ids).issubset(available_ids):
+            raise InvalidStateException("Submitted 'selected_ids' contain invalid candidates.")
+
+    def determine_final_output(
+        self,
+        raw_output: Dict[str, Any],
+        interaction_data: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        if not interaction_data or "selected_ids" not in interaction_data:
+            raise InvalidStateException("SCA output determination requires 'selected_ids'.")
+
+        selected_ids = set(interaction_data["selected_ids"])
+        candidates = raw_output.get(KEY_CANDIDATES, [])
+        selected_items = [candidate for candidate in candidates if candidate.get(KEY_ID) in selected_ids]
+
+        selection_mode = self._selection_mode()
+        selected_item = None
+        if selection_mode == SCASelectionMode.SINGLE:
+            if len(selected_items) != 1:
+                raise InvalidStateException(
+                    f"Expected a single selection for node {self.node.definition_id}, found {len(selected_items)}."
+                )
+            selected_item = selected_items[0]
+
+        sca_output_wrapper = {
+            KEY_SELECTED_ITEM: selected_item,
+            KEY_SELECTED_ITEMS: selected_items,
+        }
+
+        final_output: Dict[str, Any] = {}
+        for key, value in raw_output.items():
+            if key not in (KEY_CANDIDATES, KEY_ANALYSIS):
+                final_output[key] = value
+
+        final_output[KEY_SCA_OUTPUT] = sca_output_wrapper
+        return final_output
+
+
+class GenericSCAHandler(BaseSCAHandler):
+    """Default SCA node handler with candidate generation and analysis."""
+
+    async def execute(
+        self,
+        inputs: Dict[str, Any],
+        history: List[Dict[str, Any]],
+        feedback: Optional[str],
+        previous_output: Optional[Dict[str, Any]],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ) -> ExecutionResult:
+        variant = (self.behavior or {}).get("variant", "generic")
+        output: Dict[str, Any] = {}
+        base_candidates = self._build_candidates(variant)
+
+        num_candidates_map = {
+            ThinkingDepth.INSTANT: 2,
+            ThinkingDepth.MEDIUM: 3,
+            ThinkingDepth.HEAVY: 4,
+        }
+        num_to_generate = num_candidates_map.get(self.config.thinking_depth, 3)
+        final_candidates = base_candidates[:num_to_generate]
+
+        if feedback:
+            final_candidates.append(
+                {KEY_ID: "F1", "name": "Option based on feedback", "description": "Tailored option"}
+            )
+
+        analysis_prompt = f"Provide a comparative analysis of {len(final_candidates)} candidates."
+        analysis = await self.llm_client.generate_text(analysis_prompt)
+
+        output[KEY_CANDIDATES] = final_candidates
+        output[KEY_ANALYSIS] = analysis
+
+        if variant == "visualization":
+            output["vv_report"] = f"V&V Report for {self.node.definition_id}"
+            output["key_output_doc"] = f"Key outputs for {self.node.definition_id}"
+
+        artifacts = {"analysis_prompt": analysis_prompt}
+        return ExecutionResult(output_data=output, artifacts=artifacts)
+
+    def _build_candidates(self, variant: str) -> List[Dict[str, Any]]:
+        if variant == "visualization":
+            return [
+                {KEY_ID: "V1", "name": "Visualization Plot A", "type": "Plot"},
+                {KEY_ID: "V2", "name": "Visualization Table B", "type": "Table"},
+                {KEY_ID: "V3", "name": "Visualization Plot C (Extra)", "type": "Plot"},
+            ]
+
+        return [
+            {KEY_ID: "C1", "name": "Model Option A", "description": "Explores constrained optimization."},
+            {KEY_ID: "C2", "name": "Model Option B", "description": "Balances exploration vs. exploitation."},
+            {KEY_ID: "C3", "name": "Model Option C", "description": "Focuses on stochastic regimes."},
+            {KEY_ID: "C4", "name": "Model Option D", "description": "Targets multi-objective trade-offs."},
+        ]
+
+
+register_handler(HandlerType.GENERIC_SCA, GenericSCAHandler)
+
+
+```
+
+### services/execution_engine/handlers/generic_varl.py Content:
+
+```py
+"""Generic VARL handler for non-specialized nodes."""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from backend.workflow.constants import KEY_PRIMARY_ARTIFACT
+from backend.workflow.spec import HandlerType
+
+from ..results import ExecutionResult
+from .base import NodeHandler
+from .registry import register_handler
+
+
+class GenericVARLHandler(NodeHandler):
+    async def execute(
+        self,
+        inputs: Dict[str, Any],
+        history: List[Dict[str, Any]],
+        feedback: Optional[str],
+        previous_output: Optional[Dict[str, Any]],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ) -> ExecutionResult:
+        context = f" Feedback: {feedback}" if feedback else ""
+        prompt = f"Generate a VARL artifact for node {self.node.definition_id}.{context}"
+        llm_response = await self.llm_client.generate_text(prompt)
+
+        artifact = {
+            "content": llm_response,
+            "data": "Generic VARL data output",
+        }
+        output_data = {KEY_PRIMARY_ARTIFACT: artifact}
+        artifacts = {"prompt": prompt}
+        return ExecutionResult(output_data=output_data, artifacts=artifacts)
+
+
+register_handler(HandlerType.GENERIC_VARL, GenericVARLHandler)
+
+
+```
+
+### services/execution_engine/handlers/narrative_synthesis.py Content:
+
+```py
+"""Handler for the strategic narrative synthesis node."""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from backend.exceptions import InvalidStateException
+from backend.workflow.constants import KEY_ANALYSIS, KEY_CANDIDATES, KEY_ID, KEY_SCA_OUTPUT, KEY_SELECTED_ITEM
+from backend.workflow.spec import HandlerType
+
+from ..results import ExecutionResult
+from .generic_sca import BaseSCAHandler
+from .registry import register_handler
+
+
+class NarrativeSynthesisHandler(BaseSCAHandler):
+    async def execute(
+        self,
+        inputs: Dict[str, Any],
+        history: List[Dict[str, Any]],
+        feedback: Optional[str],
+        previous_output: Optional[Dict[str, Any]],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ) -> ExecutionResult:
+        candidates = self._generate_narrative_candidates()
+        analysis_prompt = "Compare the strategic narratives and recommend the strongest thesis."
+        analysis = await self.llm_client.generate_text(analysis_prompt)
+
+        output = {KEY_CANDIDATES: candidates, KEY_ANALYSIS: analysis}
+        artifacts = {"analysis_prompt": analysis_prompt}
+        return ExecutionResult(output_data=output, artifacts=artifacts)
+
+    def determine_final_output(
+        self,
+        raw_output: Dict[str, Any],
+        interaction_data: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        final_output = super().determine_final_output(raw_output, interaction_data)
+        sca_wrapper = final_output.get(KEY_SCA_OUTPUT, {})
+        selected_item = sca_wrapper.get(KEY_SELECTED_ITEM)
+        if not selected_item:
+            raise InvalidStateException("Narrative synthesis requires selecting a single narrative.")
+
+        synthesized_result = dict(selected_item)
+        synthesized_result[KEY_SCA_OUTPUT] = sca_wrapper
+        return synthesized_result
+
+    def _generate_narrative_candidates(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                KEY_ID: "N1",
+                "Thesis Statement": "Thesis A",
+                "Narrative Outline": "Outline A",
+                "Global Assessment": "Assessment A",
+            },
+            {
+                KEY_ID: "N2",
+                "Thesis Statement": "Thesis B",
+                "Narrative Outline": "Outline B",
+                "Global Assessment": "Assessment B",
+            },
+        ]
+
+
+register_handler(HandlerType.NARRATIVE_SYNTHESIS, NarrativeSynthesisHandler)
+
+
+```
+
+### services/execution_engine/handlers/registry.py Content:
+
+```py
+"""Registry mapping handler types to concrete implementations."""
+
+from typing import Dict, Type
+
+from backend.exceptions import InvalidStateException
+from backend.workflow.spec import HandlerType
+
+from .base import NodeHandler
+
+_HANDLER_REGISTRY: Dict[HandlerType, Type[NodeHandler]] = {}
+
+
+def register_handler(handler_type: HandlerType, handler_cls: Type[NodeHandler]):
+    _HANDLER_REGISTRY[handler_type] = handler_cls
+
+
+def get_handler_class(handler_type: HandlerType) -> Type[NodeHandler]:
+    handler_cls = _HANDLER_REGISTRY.get(handler_type)
+    if not handler_cls:
+        raise InvalidStateException(f"No handler registered for handler_type={handler_type}")
+    return handler_cls
+
+
+# Import handler modules to trigger registration side effects.
+from . import code_execution, final_paper, generic_avl, generic_sca, generic_varl, narrative_synthesis, taskbook_generator  # noqa: E402,F401
+
+
+```
+
+### services/execution_engine/handlers/taskbook_generator.py Content:
+
+```py
+"""Handler for the taskbook generator node."""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from backend.exceptions import InvalidStateException
+from backend.workflow.constants import KEY_ANALYSIS, KEY_CANDIDATES, KEY_ID, KEY_SCA_OUTPUT, KEY_SELECTED_ITEM
+from backend.workflow.spec import HandlerType
+
+from ..results import ExecutionResult
+from .generic_sca import BaseSCAHandler
+from .registry import register_handler
+
+
+class TaskbookGeneratorHandler(BaseSCAHandler):
+    async def execute(
+        self,
+        inputs: Dict[str, Any],
+        history: List[Dict[str, Any]],
+        feedback: Optional[str],
+        previous_output: Optional[Dict[str, Any]],
+        adjudication_data: Optional[List[Dict[str, Any]]],
+    ) -> ExecutionResult:
+        candidates = self._generate_taskbook_candidates()
+        analysis_prompt = "Compare the generated taskbooks and highlight their trade-offs."
+        analysis = await self.llm_client.generate_text(analysis_prompt)
+
+        output = {KEY_CANDIDATES: candidates, KEY_ANALYSIS: analysis}
+        artifacts = {"analysis_prompt": analysis_prompt}
+        return ExecutionResult(output_data=output, artifacts=artifacts)
+
+    def determine_final_output(
+        self,
+        raw_output: Dict[str, Any],
+        interaction_data: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        final_output = super().determine_final_output(raw_output, interaction_data)
+        sca_wrapper = final_output.get(KEY_SCA_OUTPUT, {})
+        selected_item = sca_wrapper.get(KEY_SELECTED_ITEM)
+        if not selected_item:
+            raise InvalidStateException("Taskbook selection is required to proceed.")
+
+        taskbook_result = dict(selected_item)
+        taskbook_result[KEY_SCA_OUTPUT] = sca_wrapper
+        return taskbook_result
+
+    def _generate_taskbook_candidates(self) -> List[Dict[str, Any]]:
+        task_a1 = {
+            "task_id": "Task_A1",
+            "task_name": "Define Objective",
+            "io_interfaces": {"inputs": {"1.1.1": ["Formal Problem Restatement"]}, "outputs": ["Objective Function"]},
+            "external_inputs": ["Problem Statement"],
+        }
+        task_a2 = {
+            "task_id": "Task_A2",
+            "task_name": "Solve Optimization",
+            "io_interfaces": {"inputs": {"Task_A1": ["Objective Function"]}, "outputs": ["Optimal Solution"]},
+            "external_inputs": ["Datasets"],
+        }
+        return [
+            {
+                KEY_ID: "OptA",
+                "name": "Optimization Approach",
+                "Structured Modeling Taskbook": {"tasks": [task_a1, task_a2]},
+            },
+            {
+                KEY_ID: "OptB",
+                "name": "Simulation Approach",
+                "Structured Modeling Taskbook": {
+                    "tasks": [
+                        {"task_id": "Task_B1", "task_name": "Build Sim", "io_interfaces": {}, "external_inputs": []}
+                    ]
+                },
+            },
+        ]
+
+
+register_handler(HandlerType.TASKBOOK_GENERATOR, TaskbookGeneratorHandler)
+
+
+```
+
     ## utils
      - __init__.py
      - event_utils.py
@@ -6735,6 +7060,190 @@ async def broadcast_from_server(workflow_id: int, message: dict) -> None:
     """Directly broadcast a message from this process to WebSocket clients."""
 
     await manager.broadcast(workflow_id, message)
+
+```
+
+    ## workflow
+     - __init__.py
+     - constants.py
+     - loader.py
+     - spec.py
+
+### workflow/__init__.py Content:
+
+```py
+"""Workflow specification package."""
+
+from .constants import DEFAULT_WORKFLOW_SPEC_ID
+from .loader import load_workflow_spec
+
+__all__ = ["DEFAULT_WORKFLOW_SPEC_ID", "load_workflow_spec"]
+
+
+```
+
+### workflow/constants.py Content:
+
+```py
+"""Shared workflow constants and keys used across the application."""
+
+# Standardized Keys for Raw Generation
+KEY_PRIMARY_ARTIFACT = "primary_artifact"
+KEY_CANDIDATES = "candidates"
+KEY_ANALYSIS = "comparative_analysis"
+KEY_CRITIQUES = "critiques"
+KEY_ID = "id"
+
+# Standardized keys for final HITL outputs
+KEY_SCA_OUTPUT = "sca_output_wrapper"
+KEY_SELECTED_ITEM = "selected_item"
+KEY_SELECTED_ITEMS = "selected_items"
+
+# Stage metadata keys
+KEY_STAGE_ID = "stage_id"
+KEY_STAGE_NAME = "stage_name"
+
+# Workflow structure constants
+PREVIOUS_IN_TASK = "__PREVIOUS_IN_TASK__"
+
+# Default workflow specification identifier
+DEFAULT_WORKFLOW_SPEC_ID = "o_award_v1"
+
+__all__ = [
+    "DEFAULT_WORKFLOW_SPEC_ID",
+    "KEY_ANALYSIS",
+    "KEY_CANDIDATES",
+    "KEY_CRITIQUES",
+    "KEY_ID",
+    "KEY_PRIMARY_ARTIFACT",
+    "KEY_SCA_OUTPUT",
+    "KEY_SELECTED_ITEM",
+    "KEY_SELECTED_ITEMS",
+    "KEY_STAGE_ID",
+    "KEY_STAGE_NAME",
+    "PREVIOUS_IN_TASK",
+]
+
+
+```
+
+### workflow/loader.py Content:
+
+```py
+"""Helpers for loading workflow specifications from YAML files."""
+
+from functools import lru_cache
+from pathlib import Path
+
+import yaml
+
+from backend.workflow.spec import WorkflowSpec
+
+
+@lru_cache(maxsize=10)
+def load_workflow_spec(spec_id: str) -> WorkflowSpec:
+    """Load and validate a workflow specification from disk."""
+    spec_path = Path(__file__).parent.parent / "data" / "workflows" / f"{spec_id}.yaml"
+    if not spec_path.exists():
+        raise FileNotFoundError(f"Workflow specification '{spec_id}' not found at {spec_path}")
+
+    with spec_path.open("r", encoding="utf-8") as spec_file:
+        data = yaml.safe_load(spec_file)
+
+    return WorkflowSpec.model_validate(data)
+
+
+__all__ = ["load_workflow_spec"]
+
+
+```
+
+### workflow/spec.py Content:
+
+```py
+"""Pydantic models describing declarative workflow specifications."""
+
+from enum import Enum
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
+
+
+class NodeType(str, Enum):
+    STANDARD = "Standard"
+    GENERATOR = "Generator"
+
+
+class HITLMode(str, Enum):
+    VARL = "VARL"
+    SCA = "SCA"
+    AVL = "AVL"
+
+
+class SCASelectionMode(str, Enum):
+    SINGLE = "Single"
+    MULTIPLE = "Multiple"
+
+
+class HandlerType(str, Enum):
+    GENERIC_SCA = "GenericSCAHandler"
+    GENERIC_AVL = "GenericAVLHandler"
+    GENERIC_VARL = "GenericVARLHandler"
+    TASKBOOK_GENERATOR = "TaskbookGeneratorHandler"
+    CODE_EXECUTION = "CodeExecutionHandler"
+    NARRATIVE_SYNTHESIS = "NarrativeSynthesisHandler"
+    FINAL_PAPER = "FinalPaperHandler"
+
+
+class NodeSpec(BaseModel):
+    id: str
+    name: str
+    phase: str
+    stage_id: str
+    stage_name: str
+    type: NodeType
+    hitl_mode: HITLMode
+    dependencies: Dict[str, Dict[str, List[str]]] = Field(default_factory=dict)
+    external_inputs: List[str] = Field(default_factory=list)
+    task_group_id: Optional[str] = None
+
+    handler_type: HandlerType
+    sca_selection_mode: Optional[SCASelectionMode] = None
+    export_config: Dict[str, Any] = Field(default_factory=dict)
+    generates_task_id_from: Optional[str] = None
+
+
+class DynamicTaskTemplateSpec(BaseModel):
+    name_prefix: str
+    stage_name_prefix: str
+    type: NodeType
+    hitl_mode: HITLMode
+    inputs: Dict[str, List[str]] = Field(default_factory=dict)
+    outputs: List[str] = Field(default_factory=list)
+    inherits_external_inputs: bool = False
+
+    handler_type: HandlerType
+    sca_selection_mode: Optional[SCASelectionMode] = None
+    export_config: Dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowSpec(BaseModel):
+    id: str
+    name: str
+    structure: List[NodeSpec]
+    dynamic_task_templates: Dict[str, DynamicTaskTemplateSpec] = Field(default_factory=dict)
+    terminal_node_suffix: str
+
+
+__all__ = [
+    "DynamicTaskTemplateSpec",
+    "HITLMode",
+    "HandlerType",
+    "NodeSpec",
+    "NodeType",
+    "SCASelectionMode",
+    "WorkflowSpec",
+]
 
 ```
 
